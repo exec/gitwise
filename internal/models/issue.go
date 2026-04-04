@@ -28,18 +28,20 @@ type Issue struct {
 }
 
 type CreateIssueRequest struct {
-	Title     string   `json:"title"`
-	Body      string   `json:"body"`
-	Labels    []string `json:"labels"`
-	Priority  string   `json:"priority"`
-	Assignees []string `json:"assignees"`
+	Title       string     `json:"title"`
+	Body        string     `json:"body"`
+	Labels      []string   `json:"labels"`
+	Priority    string     `json:"priority"`
+	Assignees   []string   `json:"assignees"`
+	MilestoneID *uuid.UUID `json:"milestone_id,omitempty"`
 }
 
 type UpdateIssueRequest struct {
-	Title     *string   `json:"title,omitempty"`
-	Body      *string   `json:"body,omitempty"`
-	Status    *string   `json:"status,omitempty"`
-	Labels    *[]string `json:"labels"`
-	Priority  *string   `json:"priority,omitempty"`
-	Assignees *[]string `json:"assignees"`
+	Title       *string    `json:"title,omitempty"`
+	Body        *string    `json:"body,omitempty"`
+	Status      *string    `json:"status,omitempty"`
+	Labels      *[]string  `json:"labels"`
+	Priority    *string    `json:"priority,omitempty"`
+	Assignees   *[]string  `json:"assignees"`
+	MilestoneID *uuid.UUID `json:"milestone_id,omitempty"`
 }

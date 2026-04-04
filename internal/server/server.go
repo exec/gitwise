@@ -24,6 +24,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/comment"
 	"github.com/gitwise-io/gitwise/internal/services/issue"
 	"github.com/gitwise-io/gitwise/internal/services/label"
+	"github.com/gitwise-io/gitwise/internal/services/milestone"
 	"github.com/gitwise-io/gitwise/internal/services/notification"
 	"github.com/gitwise-io/gitwise/internal/services/protection"
 	"github.com/gitwise-io/gitwise/internal/services/pull"
@@ -49,6 +50,7 @@ type Server struct {
 	reviewSvc  *review.Service
 	commentSvc    *comment.Service
 	labelSvc      *label.Service
+	milestoneSvc  *milestone.Service
 	notifSvc      *notification.Service
 	protectionSvc *protection.Service
 
@@ -66,6 +68,7 @@ type Server struct {
 	issueHandler  *handlers.IssueHandler
 	pullHandler       *handlers.PullHandler
 	labelHandler      *handlers.LabelHandler
+	milestoneHandler  *handlers.MilestoneHandler
 	notifHandler      *handlers.NotificationHandler
 	protectionHandler *handlers.ProtectionHandler
 
@@ -105,6 +108,7 @@ func (s *Server) initServices() {
 	s.reviewSvc = review.NewService(s.db)
 	s.commentSvc = comment.NewService(s.db)
 	s.labelSvc = label.NewService(s.db)
+	s.milestoneSvc = milestone.NewService(s.db)
 
 	// Notification service
 	s.notifSvc = notification.NewService(s.db)
@@ -119,6 +123,7 @@ func (s *Server) initServices() {
 	s.issueHandler = handlers.NewIssueHandler(s.repoSvc, s.issueSvc, s.commentSvc)
 	s.pullHandler = handlers.NewPullHandler(s.repoSvc, s.pullSvc, s.reviewSvc, s.commentSvc)
 	s.labelHandler = handlers.NewLabelHandler(s.repoSvc, s.labelSvc)
+	s.milestoneHandler = handlers.NewMilestoneHandler(s.repoSvc, s.milestoneSvc)
 	s.notifHandler = handlers.NewNotificationHandler(s.notifSvc)
 	s.protectionHandler = handlers.NewProtectionHandler(s.repoSvc, s.protectionSvc)
 
@@ -222,6 +227,12 @@ func (s *Server) setupRoutes() {
 				r.With(middleware.RequireAuth).Post("/labels", s.labelHandler.Create)
 				r.With(middleware.RequireAuth).Patch("/labels/{labelID}", s.labelHandler.Update)
 				r.With(middleware.RequireAuth).Delete("/labels/{labelID}", s.labelHandler.Delete)
+
+				// Milestones
+				r.Get("/milestones", s.milestoneHandler.List)
+				r.With(middleware.RequireAuth).Post("/milestones", s.milestoneHandler.Create)
+				r.With(middleware.RequireAuth).Patch("/milestones/{milestoneID}", s.milestoneHandler.Update)
+				r.With(middleware.RequireAuth).Delete("/milestones/{milestoneID}", s.milestoneHandler.Delete)
 
 				// Branch protection
 				r.Get("/branch-protection", s.protectionHandler.List)
