@@ -25,6 +25,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/issue"
 	"github.com/gitwise-io/gitwise/internal/services/label"
 	"github.com/gitwise-io/gitwise/internal/services/notification"
+	"github.com/gitwise-io/gitwise/internal/services/protection"
 	"github.com/gitwise-io/gitwise/internal/services/pull"
 	"github.com/gitwise-io/gitwise/internal/services/repo"
 	"github.com/gitwise-io/gitwise/internal/services/review"
@@ -46,9 +47,10 @@ type Server struct {
 	issueSvc   *issue.Service
 	pullSvc    *pull.Service
 	reviewSvc  *review.Service
-	commentSvc *comment.Service
-	labelSvc   *label.Service
-	notifSvc   *notification.Service
+	commentSvc    *comment.Service
+	labelSvc      *label.Service
+	notifSvc      *notification.Service
+	protectionSvc *protection.Service
 
 	// WebSocket
 	wsHub *gitwisews.Hub
@@ -62,9 +64,10 @@ type Server struct {
 	repoHandler   *handlers.RepoHandler
 	browseHandler *handlers.BrowseHandler
 	issueHandler  *handlers.IssueHandler
-	pullHandler   *handlers.PullHandler
-	labelHandler  *handlers.LabelHandler
-	notifHandler  *handlers.NotificationHandler
+	pullHandler       *handlers.PullHandler
+	labelHandler      *handlers.LabelHandler
+	notifHandler      *handlers.NotificationHandler
+	protectionHandler *handlers.ProtectionHandler
 
 	// Git protocol
 	gitHTTP *git.HTTPHandler
@@ -97,7 +100,8 @@ func (s *Server) initServices() {
 
 	// Phase 2 services
 	s.issueSvc = issue.NewService(s.db)
-	s.pullSvc = pull.NewService(s.db, s.gitSvc)
+	s.protectionSvc = protection.NewService(s.db)
+	s.pullSvc = pull.NewService(s.db, s.gitSvc, s.protectionSvc)
 	s.reviewSvc = review.NewService(s.db)
 	s.commentSvc = comment.NewService(s.db)
 	s.labelSvc = label.NewService(s.db)
@@ -116,6 +120,7 @@ func (s *Server) initServices() {
 	s.pullHandler = handlers.NewPullHandler(s.repoSvc, s.pullSvc, s.reviewSvc, s.commentSvc)
 	s.labelHandler = handlers.NewLabelHandler(s.repoSvc, s.labelSvc)
 	s.notifHandler = handlers.NewNotificationHandler(s.notifSvc)
+	s.protectionHandler = handlers.NewProtectionHandler(s.repoSvc, s.protectionSvc)
 
 	// Git HTTP protocol
 	s.gitHTTP = git.NewHTTPHandler(s.gitSvc, func(username, password string) (string, bool) {
@@ -217,6 +222,12 @@ func (s *Server) setupRoutes() {
 				r.With(middleware.RequireAuth).Post("/labels", s.labelHandler.Create)
 				r.With(middleware.RequireAuth).Patch("/labels/{labelID}", s.labelHandler.Update)
 				r.With(middleware.RequireAuth).Delete("/labels/{labelID}", s.labelHandler.Delete)
+
+				// Branch protection
+				r.Get("/branch-protection", s.protectionHandler.List)
+				r.With(middleware.RequireAuth).Post("/branch-protection", s.protectionHandler.Create)
+				r.With(middleware.RequireAuth).Patch("/branch-protection/{ruleID}", s.protectionHandler.Update)
+				r.With(middleware.RequireAuth).Delete("/branch-protection/{ruleID}", s.protectionHandler.Delete)
 			})
 		})
 
