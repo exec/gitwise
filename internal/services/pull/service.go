@@ -68,10 +68,28 @@ func (s *Service) Create(ctx context.Context, repoID, authorID uuid.UUID, ownerN
 		return nil, fmt.Errorf("compute diff: %w", err)
 	}
 
+	type fileStat struct {
+		Path       string `json:"path"`
+		Status     string `json:"status"`
+		Insertions int    `json:"insertions"`
+		Deletions  int    `json:"deletions"`
+	}
+
+	var fileStats []fileStat
+	for _, f := range diffStats.Files {
+		fileStats = append(fileStats, fileStat{
+			Path:       f.Path,
+			Status:     f.Status,
+			Insertions: f.Insertions,
+			Deletions:  f.Deletions,
+		})
+	}
+
 	statsJSON, _ := json.Marshal(map[string]any{
 		"files_changed": diffStats.Stats.TotalFiles,
 		"insertions":    diffStats.Stats.TotalAdditions,
 		"deletions":     diffStats.Stats.TotalDeletions,
+		"files":         fileStats,
 	})
 
 	status := "open"
