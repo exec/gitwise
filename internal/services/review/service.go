@@ -127,7 +127,6 @@ func (s *Service) updateReviewSummary(ctx context.Context, prID uuid.UUID) {
 	defer rows.Close()
 
 	var approvedBy, changesRequestedBy []string
-	commentsCount := 0
 
 	for rows.Next() {
 		var username, reviewType string
@@ -141,16 +140,26 @@ func (s *Service) updateReviewSummary(ctx context.Context, prID uuid.UUID) {
 		case "changes_requested":
 			changesRequestedBy = append(changesRequestedBy, username)
 		}
-		commentsCount++
 	}
 	if err := rows.Err(); err != nil {
 		slog.Error("update review summary: iterate failed", "pr_id", prID, "error", err)
 	}
 
+	var reviewsCount int
+	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM reviews WHERE pr_id = $1`, prID).Scan(&reviewsCount); err != nil {
+		slog.Error("update review summary: reviews count failed", "pr_id", prID, "error", err)
+	}
+
+	var commentsCount int
+	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM comments WHERE pr_id = $1`, prID).Scan(&commentsCount); err != nil {
+		slog.Error("update review summary: comments count failed", "pr_id", prID, "error", err)
+	}
+
 	summary, _ := json.Marshal(map[string]any{
-		"approved_by":           approvedBy,
-		"changes_requested_by":  changesRequestedBy,
-		"comments_count":        commentsCount,
+		"approved_by":          approvedBy,
+		"changes_requested_by": changesRequestedBy,
+		"reviews_count":        reviewsCount,
+		"comments_count":       commentsCount,
 	})
 
 	if _, err := s.db.Exec(ctx, `UPDATE pull_requests SET review_summary = $2, updated_at = now() WHERE id = $1`, prID, summary); err != nil {
