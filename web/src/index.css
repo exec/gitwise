@@ -1079,6 +1079,21 @@ input:disabled {
   font-style: italic;
 }
 
+/* Side-by-side diff */
+.diff-view-toggle { display: flex; gap: 4px; margin-bottom: 12px; }
+
+.diff-split-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 0.8125rem; line-height: 1.4; table-layout: fixed; }
+.diff-split-table td { padding: 0 8px; white-space: pre; vertical-align: top; overflow: hidden; }
+.diff-split-divider { width: 1px; background: var(--border); padding: 0 !important; }
+.diff-split-content { width: calc(50% - 51px); }
+.diff-split-num { width: 50px; min-width: 50px; text-align: right; color: var(--text-muted); user-select: none; border-right: 1px solid var(--border); padding-right: 8px !important; }
+
+/* Syntax highlighting */
+.hl-keyword { color: #ff7b72; }
+.hl-string { color: #a5d6ff; }
+.hl-comment { color: #8b949e; font-style: italic; }
+.hl-number { color: #79c0ff; }
+
 .tab-count {
   font-size: 0.75rem;
   background: var(--bg-tertiary);
