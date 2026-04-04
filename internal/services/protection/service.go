@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ var (
 	ErrNotFound       = errors.New("branch protection rule not found")
 	ErrDuplicate      = errors.New("branch protection rule already exists for this pattern")
 	ErrInvalidPattern = errors.New("branch pattern is required")
+	ErrInvalidInput   = errors.New("invalid input")
 )
 
 type Service struct {
@@ -31,6 +33,9 @@ func (s *Service) Create(ctx context.Context, repoID uuid.UUID, req models.Creat
 	pattern := strings.TrimSpace(req.BranchPattern)
 	if pattern == "" || len(pattern) > 255 {
 		return nil, ErrInvalidPattern
+	}
+	if req.RequiredReviews < 0 {
+		return nil, fmt.Errorf("%w: required_reviews must be non-negative", ErrInvalidInput)
 	}
 
 	rule := &models.BranchProtection{
@@ -89,6 +94,9 @@ func (s *Service) Update(ctx context.Context, repoID uuid.UUID, ruleID uuid.UUID
 	argIdx := 3
 
 	if req.RequiredReviews != nil {
+		if *req.RequiredReviews < 0 {
+			return nil, fmt.Errorf("%w: required_reviews must be non-negative", ErrInvalidInput)
+		}
 		setClauses = append(setClauses, fmt.Sprintf("required_reviews = $%d", argIdx))
 		args = append(args, *req.RequiredReviews)
 		argIdx++
@@ -130,20 +138,22 @@ func (s *Service) Delete(ctx context.Context, repoID uuid.UUID, ruleID uuid.UUID
 }
 
 // Check returns the branch protection rule for the given repo and branch name.
+// Supports glob/fnmatch-style patterns (e.g. "release/*" matches "release/v1.0").
 // Returns nil, nil if no rule matches.
 func (s *Service) Check(ctx context.Context, repoID uuid.UUID, branchName string) (*models.BranchProtection, error) {
-	rule := &models.BranchProtection{}
-	err := s.db.QueryRow(ctx, `
-		SELECT id, repo_id, branch_pattern, required_reviews, require_linear, created_at, updated_at
-		FROM branch_protection_rules
-		WHERE repo_id = $1 AND branch_pattern = $2`,
-		repoID, branchName,
-	).Scan(&rule.ID, &rule.RepoID, &rule.BranchPattern, &rule.RequiredReviews, &rule.RequireLinear, &rule.CreatedAt, &rule.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
+	rules, err := s.List(ctx, repoID)
 	if err != nil {
 		return nil, fmt.Errorf("check branch protection: %w", err)
 	}
-	return rule, nil
+	for i := range rules {
+		if matchBranch(rules[i].BranchPattern, branchName) {
+			return &rules[i], nil
+		}
+	}
+	return nil, nil
+}
+
+func matchBranch(pattern, branch string) bool {
+	matched, _ := filepath.Match(pattern, branch)
+	return matched
 }

@@ -15,8 +15,9 @@ import (
 )
 
 var (
-	ErrNotFound     = errors.New("milestone not found")
-	ErrInvalidTitle = errors.New("milestone title is required")
+	ErrNotFound       = errors.New("milestone not found")
+	ErrInvalidTitle   = errors.New("milestone title is required")
+	ErrDuplicateTitle = errors.New("milestone with this title already exists")
 )
 
 type Service struct {
@@ -50,7 +51,7 @@ func (s *Service) Create(ctx context.Context, repoID uuid.UUID, req models.Creat
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "unique constraint") || strings.Contains(err.Error(), "duplicate key") {
-			return nil, fmt.Errorf("milestone with this title already exists in this repository")
+			return nil, ErrDuplicateTitle
 		}
 		return nil, fmt.Errorf("insert milestone: %w", err)
 	}
@@ -133,7 +134,7 @@ func (s *Service) Update(ctx context.Context, repoID uuid.UUID, milestoneID uuid
 	}
 	if err != nil {
 		if strings.Contains(err.Error(), "unique constraint") || strings.Contains(err.Error(), "duplicate key") {
-			return nil, fmt.Errorf("milestone with this title already exists in this repository")
+			return nil, ErrDuplicateTitle
 		}
 		return nil, fmt.Errorf("update milestone: %w", err)
 	}

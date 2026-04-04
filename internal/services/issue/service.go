@@ -2,7 +2,6 @@ package issue
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/gitwise-io/gitwise/internal/models"
+	"github.com/gitwise-io/gitwise/internal/pagination"
 )
 
 var (
@@ -147,16 +147,22 @@ func (s *Service) List(ctx context.Context, repoID uuid.UUID, status string, cur
 	}
 
 	if cursor != "" {
-		cursorTime, err := decodeCursor(cursor)
+		cursorTime, cursorID, err := pagination.DecodeCursor(cursor)
 		if err != nil {
 			return nil, "", fmt.Errorf("invalid cursor: %w", err)
 		}
-		query += fmt.Sprintf(` AND i.created_at < $%d`, argIdx)
-		args = append(args, cursorTime)
-		argIdx++
+		if cursorID == uuid.Nil {
+			query += fmt.Sprintf(` AND i.created_at < $%d`, argIdx)
+			args = append(args, cursorTime)
+			argIdx++
+		} else {
+			query += fmt.Sprintf(` AND (i.created_at < $%d OR (i.created_at = $%d AND i.id < $%d))`, argIdx, argIdx, argIdx+1)
+			args = append(args, cursorTime, cursorID)
+			argIdx += 2
+		}
 	}
 
-	query += ` ORDER BY i.created_at DESC`
+	query += ` ORDER BY i.created_at DESC, i.id DESC`
 	query += fmt.Sprintf(` LIMIT $%d`, argIdx)
 	args = append(args, limit+1)
 
@@ -186,7 +192,7 @@ func (s *Service) List(ctx context.Context, repoID uuid.UUID, status string, cur
 	var nextCursor string
 	if len(issues) > limit {
 		issues = issues[:limit]
-		nextCursor = encodeCursor(issues[limit-1].CreatedAt)
+		nextCursor = pagination.EncodeCursor(issues[limit-1].CreatedAt, issues[limit-1].ID)
 	}
 
 	return issues, nextCursor, nil
@@ -298,17 +304,6 @@ func isValidPriority(p string) bool {
 	return false
 }
 
-func encodeCursor(t time.Time) string {
-	return base64.StdEncoding.EncodeToString([]byte(t.Format(time.RFC3339Nano)))
-}
-
-func decodeCursor(cursor string) (time.Time, error) {
-	b, err := base64.StdEncoding.DecodeString(cursor)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return time.Parse(time.RFC3339Nano, string(b))
-}
 
 // resolveAssignees converts a list of usernames to UUIDs by querying the users table.
 func (s *Service) resolveAssignees(ctx context.Context, usernames []string) ([]uuid.UUID, error) {

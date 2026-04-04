@@ -2,7 +2,6 @@ package comment
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/gitwise-io/gitwise/internal/models"
+	"github.com/gitwise-io/gitwise/internal/pagination"
 )
 
 var (
@@ -88,16 +88,22 @@ func (s *Service) list(ctx context.Context, col string, id uuid.UUID, cursor str
 	argIdx := 2
 
 	if cursor != "" {
-		cursorTime, err := decodeCursor(cursor)
+		cursorTime, cursorID, err := pagination.DecodeCursor(cursor)
 		if err != nil {
 			return nil, "", fmt.Errorf("invalid cursor: %w", err)
 		}
-		query += fmt.Sprintf(` AND c.created_at > $%d`, argIdx)
-		args = append(args, cursorTime)
-		argIdx++
+		if cursorID == uuid.Nil {
+			query += fmt.Sprintf(` AND c.created_at > $%d`, argIdx)
+			args = append(args, cursorTime)
+			argIdx++
+		} else {
+			query += fmt.Sprintf(` AND (c.created_at > $%d OR (c.created_at = $%d AND c.id > $%d))`, argIdx, argIdx, argIdx+1)
+			args = append(args, cursorTime, cursorID)
+			argIdx += 2
+		}
 	}
 
-	query += ` ORDER BY c.created_at ASC`
+	query += ` ORDER BY c.created_at ASC, c.id ASC`
 	query += fmt.Sprintf(` LIMIT $%d`, argIdx)
 	args = append(args, limit+1)
 
@@ -125,7 +131,7 @@ func (s *Service) list(ctx context.Context, col string, id uuid.UUID, cursor str
 	var nextCursor string
 	if len(comments) > limit {
 		comments = comments[:limit]
-		nextCursor = encodeCursor(comments[limit-1].CreatedAt)
+		nextCursor = pagination.EncodeCursor(comments[limit-1].CreatedAt, comments[limit-1].ID)
 	}
 
 	return comments, nextCursor, nil
@@ -160,17 +166,6 @@ func (s *Service) Update(ctx context.Context, commentID, authorID uuid.UUID, req
 	return comment, nil
 }
 
-func encodeCursor(t time.Time) string {
-	return base64.StdEncoding.EncodeToString([]byte(t.Format(time.RFC3339Nano)))
-}
-
-func decodeCursor(cursor string) (time.Time, error) {
-	b, err := base64.StdEncoding.DecodeString(cursor)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return time.Parse(time.RFC3339Nano, string(b))
-}
 
 func (s *Service) Delete(ctx context.Context, commentID, authorID uuid.UUID) error {
 	// Check ownership first

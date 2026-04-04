@@ -2,7 +2,6 @@ package pull
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/gitwise-io/gitwise/internal/git"
 	"github.com/gitwise-io/gitwise/internal/models"
+	"github.com/gitwise-io/gitwise/internal/pagination"
 	"github.com/gitwise-io/gitwise/internal/services/protection"
 )
 
@@ -205,16 +205,22 @@ func (s *Service) List(ctx context.Context, repoID uuid.UUID, status string, cur
 	}
 
 	if cursor != "" {
-		cursorTime, err := decodeCursor(cursor)
+		cursorTime, cursorID, err := pagination.DecodeCursor(cursor)
 		if err != nil {
 			return nil, "", fmt.Errorf("invalid cursor: %w", err)
 		}
-		query += fmt.Sprintf(` AND p.created_at < $%d`, argIdx)
-		args = append(args, cursorTime)
-		argIdx++
+		if cursorID == uuid.Nil {
+			query += fmt.Sprintf(` AND p.created_at < $%d`, argIdx)
+			args = append(args, cursorTime)
+			argIdx++
+		} else {
+			query += fmt.Sprintf(` AND (p.created_at < $%d OR (p.created_at = $%d AND p.id < $%d))`, argIdx, argIdx, argIdx+1)
+			args = append(args, cursorTime, cursorID)
+			argIdx += 2
+		}
 	}
 
-	query += ` ORDER BY p.created_at DESC`
+	query += ` ORDER BY p.created_at DESC, p.id DESC`
 	query += fmt.Sprintf(` LIMIT $%d`, argIdx)
 	args = append(args, limit+1)
 
@@ -248,7 +254,7 @@ func (s *Service) List(ctx context.Context, repoID uuid.UUID, status string, cur
 	var nextCursor string
 	if len(prs) > limit {
 		prs = prs[:limit]
-		nextCursor = encodeCursor(prs[limit-1].CreatedAt)
+		nextCursor = pagination.EncodeCursor(prs[limit-1].CreatedAt, prs[limit-1].ID)
 	}
 
 	return prs, nextCursor, nil
@@ -472,14 +478,3 @@ func marshalIntent(intent *models.PRIntent) (json.RawMessage, error) {
 	return data, nil
 }
 
-func encodeCursor(t time.Time) string {
-	return base64.StdEncoding.EncodeToString([]byte(t.Format(time.RFC3339Nano)))
-}
-
-func decodeCursor(cursor string) (time.Time, error) {
-	b, err := base64.StdEncoding.DecodeString(cursor)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return time.Parse(time.RFC3339Nano, string(b))
-}

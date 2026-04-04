@@ -18,6 +18,25 @@
     Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
     "Liberation Mono", monospace;
+  --hl-keyword: #ff7b72;
+  --hl-string: #a5d6ff;
+  --hl-comment: #8b949e;
+  --hl-number: #79c0ff;
+  --hl-function: #d2a8ff;
+  --hl-operator: #ff7b72;
+  --hl-type: #ffa657;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --hl-keyword: #cf222e;
+    --hl-string: #0a3069;
+    --hl-comment: #6e7781;
+    --hl-number: #0550ae;
+    --hl-function: #8250df;
+    --hl-operator: #cf222e;
+    --hl-type: #953800;
+  }
 }
 
 *,
@@ -1142,10 +1161,13 @@ input:disabled {
 .diff-split-num { width: 50px; min-width: 50px; text-align: right; color: var(--text-muted); user-select: none; border-right: 1px solid var(--border); padding-right: 8px !important; }
 
 /* Syntax highlighting */
-.hl-keyword { color: #ff7b72; }
-.hl-string { color: #a5d6ff; }
-.hl-comment { color: #8b949e; font-style: italic; }
-.hl-number { color: #79c0ff; }
+.hl-keyword { color: var(--hl-keyword); }
+.hl-string { color: var(--hl-string); }
+.hl-comment { color: var(--hl-comment); font-style: italic; }
+.hl-number { color: var(--hl-number); }
+.hl-function { color: var(--hl-function); }
+.hl-operator { color: var(--hl-operator); }
+.hl-type { color: var(--hl-type); }
 
 /* Inline comments on diff */
 .diff-line:hover .inline-comment-btn {

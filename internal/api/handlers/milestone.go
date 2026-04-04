@@ -53,6 +53,10 @@ func (h *MilestoneHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation_error", "milestone title is required (max 255 chars)")
 		return
 	}
+	if errors.Is(err, milestone.ErrDuplicateTitle) {
+		writeError(w, http.StatusConflict, "duplicate", "milestone with this title already exists")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to create milestone")
 		return
@@ -120,6 +124,10 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if errors.Is(err, milestone.ErrInvalidTitle) {
 		writeError(w, http.StatusBadRequest, "validation_error", "milestone title is required (max 255 chars)")
+		return
+	}
+	if errors.Is(err, milestone.ErrDuplicateTitle) {
+		writeError(w, http.StatusConflict, "duplicate", "milestone with this title already exists")
 		return
 	}
 	if err != nil {
