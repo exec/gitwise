@@ -690,7 +690,7 @@ func (s *Service) MergeBranches(owner, name, base, head, strategy, message, auth
 	case "squash":
 		return s.doSquashMerge(r, owner, name, base, baseCommit, headCommit, message, sig)
 	case "rebase":
-		return fmt.Errorf("rebase merge strategy is not yet supported; use merge or squash")
+		return s.doRebaseMerge(r, owner, name, base, baseCommit, headCommit, sig)
 	default:
 		return fmt.Errorf("unknown merge strategy: %s", strategy)
 	}
@@ -755,6 +755,67 @@ func (s *Service) doSquashMerge(r *gogit.Repository, owner, name, base string, b
 	}
 
 	ref := plumbing.NewHashReference(plumbing.NewBranchReferenceName(base), newHash)
+	return r.Storer.SetReference(ref)
+}
+
+func (s *Service) doRebaseMerge(r *gogit.Repository, owner, name, base string, baseCommit, headCommit *object.Commit, sig *object.Signature) error {
+	// Find merge base
+	mergeBaseCommits, err := baseCommit.MergeBase(headCommit)
+	if err != nil || len(mergeBaseCommits) == 0 {
+		return fmt.Errorf("cannot find common ancestor for rebase")
+	}
+	mergeBaseSHA := mergeBaseCommits[0].Hash.String()
+
+	// Collect commits from head back to merge base (exclusive), oldest first
+	var commits []*object.Commit
+	iter, err := r.Log(&gogit.LogOptions{From: headCommit.Hash})
+	if err != nil {
+		return fmt.Errorf("log for rebase: %w", err)
+	}
+	err = iter.ForEach(func(c *object.Commit) error {
+		if c.Hash.String() == mergeBaseSHA {
+			return errStopIteration
+		}
+		commits = append(commits, c)
+		return nil
+	})
+	if err != nil && !errors.Is(err, errStopIteration) {
+		return fmt.Errorf("iterate commits for rebase: %w", err)
+	}
+
+	if len(commits) == 0 {
+		return fmt.Errorf("no commits to rebase")
+	}
+
+	// Reverse to chronological order (oldest first)
+	for i, j := 0, len(commits)-1; i < j; i, j = i+1, j-1 {
+		commits[i], commits[j] = commits[j], commits[i]
+	}
+
+	// Replay each commit on top of base
+	currentTip := baseCommit.Hash
+	for _, c := range commits {
+		newCommit := &object.Commit{
+			Author:       c.Author,
+			Committer:    *sig,
+			Message:      c.Message,
+			TreeHash:     c.TreeHash,
+			ParentHashes: []plumbing.Hash{currentTip},
+		}
+
+		obj := r.Storer.NewEncodedObject()
+		if err := newCommit.Encode(obj); err != nil {
+			return fmt.Errorf("encode rebased commit: %w", err)
+		}
+		hash, err := r.Storer.SetEncodedObject(obj)
+		if err != nil {
+			return fmt.Errorf("store rebased commit: %w", err)
+		}
+		currentTip = hash
+	}
+
+	// Update base branch ref to the last rebased commit
+	ref := plumbing.NewHashReference(plumbing.NewBranchReferenceName(base), currentTip)
 	return r.Storer.SetReference(ref)
 }
 
