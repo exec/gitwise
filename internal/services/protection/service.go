@@ -83,10 +83,10 @@ func (s *Service) List(ctx context.Context, repoID uuid.UUID) ([]models.BranchPr
 	return rules, nil
 }
 
-func (s *Service) Update(ctx context.Context, ruleID uuid.UUID, req models.UpdateBranchProtectionRequest) (*models.BranchProtection, error) {
+func (s *Service) Update(ctx context.Context, repoID uuid.UUID, ruleID uuid.UUID, req models.UpdateBranchProtectionRequest) (*models.BranchProtection, error) {
 	setClauses := []string{"updated_at = now()"}
-	args := []any{ruleID}
-	argIdx := 2
+	args := []any{ruleID, repoID}
+	argIdx := 3
 
 	if req.RequiredReviews != nil {
 		setClauses = append(setClauses, fmt.Sprintf("required_reviews = $%d", argIdx))
@@ -101,7 +101,7 @@ func (s *Service) Update(ctx context.Context, ruleID uuid.UUID, req models.Updat
 
 	query := fmt.Sprintf(`
 		UPDATE branch_protection_rules SET %s
-		WHERE id = $1
+		WHERE id = $1 AND repo_id = $2
 		RETURNING id, repo_id, branch_pattern, required_reviews, require_linear, created_at, updated_at`,
 		strings.Join(setClauses, ", "))
 
@@ -118,8 +118,8 @@ func (s *Service) Update(ctx context.Context, ruleID uuid.UUID, req models.Updat
 	return rule, nil
 }
 
-func (s *Service) Delete(ctx context.Context, ruleID uuid.UUID) error {
-	tag, err := s.db.Exec(ctx, `DELETE FROM branch_protection_rules WHERE id = $1`, ruleID)
+func (s *Service) Delete(ctx context.Context, repoID uuid.UUID, ruleID uuid.UUID) error {
+	tag, err := s.db.Exec(ctx, `DELETE FROM branch_protection_rules WHERE id = $1 AND repo_id = $2`, ruleID, repoID)
 	if err != nil {
 		return fmt.Errorf("delete branch protection rule: %w", err)
 	}

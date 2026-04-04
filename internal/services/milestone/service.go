@@ -84,10 +84,10 @@ func (s *Service) List(ctx context.Context, repoID uuid.UUID) ([]models.Mileston
 	return milestones, nil
 }
 
-func (s *Service) Update(ctx context.Context, milestoneID uuid.UUID, req models.UpdateMilestoneRequest) (*models.Milestone, error) {
+func (s *Service) Update(ctx context.Context, repoID uuid.UUID, milestoneID uuid.UUID, req models.UpdateMilestoneRequest) (*models.Milestone, error) {
 	setClauses := []string{}
-	args := []any{milestoneID}
-	argIdx := 2
+	args := []any{milestoneID, repoID}
+	argIdx := 3
 
 	if req.Title != nil {
 		title := strings.TrimSpace(*req.Title)
@@ -121,7 +121,7 @@ func (s *Service) Update(ctx context.Context, milestoneID uuid.UUID, req models.
 		return s.getByID(ctx, milestoneID)
 	}
 
-	query := fmt.Sprintf(`UPDATE milestones SET %s WHERE id = $1 RETURNING id, repo_id, title, description, due_date, status, created_at`,
+	query := fmt.Sprintf(`UPDATE milestones SET %s WHERE id = $1 AND repo_id = $2 RETURNING id, repo_id, title, description, due_date, status, created_at`,
 		strings.Join(setClauses, ", "))
 
 	m := &models.Milestone{}
@@ -140,14 +140,14 @@ func (s *Service) Update(ctx context.Context, milestoneID uuid.UUID, req models.
 	return m, nil
 }
 
-func (s *Service) Delete(ctx context.Context, milestoneID uuid.UUID) error {
-	// Clear milestone_id on any issues referencing this milestone
-	_, err := s.db.Exec(ctx, `UPDATE issues SET milestone_id = NULL WHERE milestone_id = $1`, milestoneID)
+func (s *Service) Delete(ctx context.Context, repoID uuid.UUID, milestoneID uuid.UUID) error {
+	// Clear milestone_id on any issues referencing this milestone within the same repo
+	_, err := s.db.Exec(ctx, `UPDATE issues SET milestone_id = NULL WHERE milestone_id = $1 AND repo_id = $2`, milestoneID, repoID)
 	if err != nil {
 		return fmt.Errorf("clear milestone from issues: %w", err)
 	}
 
-	tag, err := s.db.Exec(ctx, `DELETE FROM milestones WHERE id = $1`, milestoneID)
+	tag, err := s.db.Exec(ctx, `DELETE FROM milestones WHERE id = $1 AND repo_id = $2`, milestoneID, repoID)
 	if err != nil {
 		return fmt.Errorf("delete milestone: %w", err)
 	}

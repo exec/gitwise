@@ -117,7 +117,7 @@ func (h *ProtectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rule, err := h.protection.Update(r.Context(), ruleID, req)
+	rule, err := h.protection.Update(r.Context(), repository.ID, ruleID, req)
 	if errors.Is(err, protection.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "branch protection rule not found")
 		return
@@ -157,7 +157,7 @@ func (h *ProtectionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.protection.Delete(r.Context(), ruleID); err != nil {
+	if err := h.protection.Delete(r.Context(), repository.ID, ruleID); err != nil {
 		if errors.Is(err, protection.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "branch protection rule not found")
 			return

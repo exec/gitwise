@@ -113,7 +113,7 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	m, err := h.milestones.Update(r.Context(), milestoneID, req)
+	m, err := h.milestones.Update(r.Context(), repository.ID, milestoneID, req)
 	if errors.Is(err, milestone.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "milestone not found")
 		return
@@ -157,7 +157,7 @@ func (h *MilestoneHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.milestones.Delete(r.Context(), milestoneID); err != nil {
+	if err := h.milestones.Delete(r.Context(), repository.ID, milestoneID); err != nil {
 		if errors.Is(err, milestone.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "milestone not found")
 			return
@@ -166,5 +166,5 @@ func (h *MilestoneHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	w.WriteHeader(http.StatusNoContent)
 }
