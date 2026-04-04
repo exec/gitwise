@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
@@ -23,10 +24,12 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/comment"
 	"github.com/gitwise-io/gitwise/internal/services/issue"
 	"github.com/gitwise-io/gitwise/internal/services/label"
+	"github.com/gitwise-io/gitwise/internal/services/notification"
 	"github.com/gitwise-io/gitwise/internal/services/pull"
 	"github.com/gitwise-io/gitwise/internal/services/repo"
 	"github.com/gitwise-io/gitwise/internal/services/review"
 	"github.com/gitwise-io/gitwise/internal/services/user"
+	gitwisews "github.com/gitwise-io/gitwise/internal/websocket"
 )
 
 type Server struct {
@@ -45,6 +48,10 @@ type Server struct {
 	reviewSvc  *review.Service
 	commentSvc *comment.Service
 	labelSvc   *label.Service
+	notifSvc   *notification.Service
+
+	// WebSocket
+	wsHub *gitwisews.Hub
 
 	// Middleware
 	sessions *middleware.SessionManager
@@ -57,6 +64,7 @@ type Server struct {
 	issueHandler  *handlers.IssueHandler
 	pullHandler   *handlers.PullHandler
 	labelHandler  *handlers.LabelHandler
+	notifHandler  *handlers.NotificationHandler
 
 	// Git protocol
 	gitHTTP *git.HTTPHandler
@@ -94,6 +102,12 @@ func (s *Server) initServices() {
 	s.commentSvc = comment.NewService(s.db)
 	s.labelSvc = label.NewService(s.db)
 
+	// Notification service
+	s.notifSvc = notification.NewService(s.db)
+
+	// WebSocket hub
+	s.wsHub = gitwisews.NewHub()
+
 	// Handlers
 	s.authHandler = handlers.NewAuthHandler(s.userSvc, s.sessions)
 	s.repoHandler = handlers.NewRepoHandler(s.repoSvc)
@@ -101,6 +115,7 @@ func (s *Server) initServices() {
 	s.issueHandler = handlers.NewIssueHandler(s.repoSvc, s.issueSvc, s.commentSvc)
 	s.pullHandler = handlers.NewPullHandler(s.repoSvc, s.pullSvc, s.reviewSvc, s.commentSvc)
 	s.labelHandler = handlers.NewLabelHandler(s.repoSvc, s.labelSvc)
+	s.notifHandler = handlers.NewNotificationHandler(s.notifSvc)
 
 	// Git HTTP protocol
 	s.gitHTTP = git.NewHTTPHandler(s.gitSvc, func(username, password string) (string, bool) {
@@ -205,6 +220,14 @@ func (s *Server) setupRoutes() {
 			})
 		})
 
+		// Notifications (authenticated)
+		r.Route("/notifications", func(r chi.Router) {
+			r.Use(middleware.RequireAuth)
+			r.Get("/", s.notifHandler.List)
+			r.Post("/read-all", s.notifHandler.MarkAllRead)
+			r.Post("/{notifID}/read", s.notifHandler.MarkRead)
+		})
+
 		// User profiles
 		r.Get("/users/{username}", s.handleGetUser)
 		r.Get("/users/{username}/repos", s.handleListUserRepos)
@@ -212,6 +235,11 @@ func (s *Server) setupRoutes() {
 		// Search (stub)
 		r.Post("/search", handleNotImplemented)
 	})
+
+	// WebSocket endpoint (authenticated via session cookie or bearer token)
+	s.router.Get("/ws", s.wsHub.HandleWS(func(r *http.Request) *uuid.UUID {
+		return middleware.GetUserID(r.Context())
+	}))
 
 	// SPA frontend: serve static files from web/dist, fallback to index.html
 	s.router.NotFound(s.spaHandler())
