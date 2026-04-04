@@ -58,27 +58,28 @@ func (s *Service) Create(ctx context.Context, repoID, authorID uuid.UUID, req mo
 	}
 
 	issue := &models.Issue{
-		ID:        uuid.New(),
-		RepoID:    repoID,
-		Number:    number,
-		AuthorID:  authorID,
-		Title:     title,
-		Body:      req.Body,
-		Status:    "open",
-		Labels:    labels,
-		Assignees: []uuid.UUID{},
-		LinkedPRs: []uuid.UUID{},
-		Priority:  priority,
-		Metadata:  json.RawMessage(`{}`),
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:          uuid.New(),
+		RepoID:      repoID,
+		Number:      number,
+		AuthorID:    authorID,
+		Title:       title,
+		Body:        req.Body,
+		Status:      "open",
+		Labels:      labels,
+		Assignees:   []uuid.UUID{},
+		MilestoneID: req.MilestoneID,
+		LinkedPRs:   []uuid.UUID{},
+		Priority:    priority,
+		Metadata:    json.RawMessage(`{}`),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
 	}
 
 	_, err = s.db.Exec(ctx, `
-		INSERT INTO issues (id, repo_id, number, author_id, title, body, status, labels, assignees, linked_prs, priority, metadata, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		INSERT INTO issues (id, repo_id, number, author_id, title, body, status, labels, assignees, milestone_id, linked_prs, priority, metadata, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 		issue.ID, issue.RepoID, issue.Number, issue.AuthorID, issue.Title, issue.Body,
-		issue.Status, issue.Labels, issue.Assignees, issue.LinkedPRs, issue.Priority,
+		issue.Status, issue.Labels, issue.Assignees, issue.MilestoneID, issue.LinkedPRs, issue.Priority,
 		issue.Metadata, issue.CreatedAt, issue.UpdatedAt,
 	)
 	if err != nil {
@@ -214,6 +215,11 @@ func (s *Service) Update(ctx context.Context, repoID uuid.UUID, number int, req 
 		}
 		setClauses = append(setClauses, fmt.Sprintf("priority = $%d", argIdx))
 		args = append(args, *req.Priority)
+		argIdx++
+	}
+	if req.MilestoneID != nil {
+		setClauses = append(setClauses, fmt.Sprintf("milestone_id = $%d", argIdx))
+		args = append(args, *req.MilestoneID)
 		argIdx++
 	}
 

@@ -23,6 +23,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/comment"
 	"github.com/gitwise-io/gitwise/internal/services/issue"
 	"github.com/gitwise-io/gitwise/internal/services/label"
+	"github.com/gitwise-io/gitwise/internal/services/milestone"
 	"github.com/gitwise-io/gitwise/internal/services/pull"
 	"github.com/gitwise-io/gitwise/internal/services/repo"
 	"github.com/gitwise-io/gitwise/internal/services/review"
@@ -43,8 +44,9 @@ type Server struct {
 	issueSvc   *issue.Service
 	pullSvc    *pull.Service
 	reviewSvc  *review.Service
-	commentSvc *comment.Service
-	labelSvc   *label.Service
+	commentSvc    *comment.Service
+	labelSvc      *label.Service
+	milestoneSvc  *milestone.Service
 
 	// Middleware
 	sessions *middleware.SessionManager
@@ -55,8 +57,9 @@ type Server struct {
 	repoHandler   *handlers.RepoHandler
 	browseHandler *handlers.BrowseHandler
 	issueHandler  *handlers.IssueHandler
-	pullHandler   *handlers.PullHandler
-	labelHandler  *handlers.LabelHandler
+	pullHandler      *handlers.PullHandler
+	labelHandler     *handlers.LabelHandler
+	milestoneHandler *handlers.MilestoneHandler
 
 	// Git protocol
 	gitHTTP *git.HTTPHandler
@@ -93,6 +96,7 @@ func (s *Server) initServices() {
 	s.reviewSvc = review.NewService(s.db)
 	s.commentSvc = comment.NewService(s.db)
 	s.labelSvc = label.NewService(s.db)
+	s.milestoneSvc = milestone.NewService(s.db)
 
 	// Handlers
 	s.authHandler = handlers.NewAuthHandler(s.userSvc, s.sessions)
@@ -101,6 +105,7 @@ func (s *Server) initServices() {
 	s.issueHandler = handlers.NewIssueHandler(s.repoSvc, s.issueSvc, s.commentSvc)
 	s.pullHandler = handlers.NewPullHandler(s.repoSvc, s.pullSvc, s.reviewSvc, s.commentSvc)
 	s.labelHandler = handlers.NewLabelHandler(s.repoSvc, s.labelSvc)
+	s.milestoneHandler = handlers.NewMilestoneHandler(s.repoSvc, s.milestoneSvc)
 
 	// Git HTTP protocol
 	s.gitHTTP = git.NewHTTPHandler(s.gitSvc, func(username, password string) (string, bool) {
@@ -202,6 +207,12 @@ func (s *Server) setupRoutes() {
 				r.With(middleware.RequireAuth).Post("/labels", s.labelHandler.Create)
 				r.With(middleware.RequireAuth).Patch("/labels/{labelID}", s.labelHandler.Update)
 				r.With(middleware.RequireAuth).Delete("/labels/{labelID}", s.labelHandler.Delete)
+
+				// Milestones
+				r.Get("/milestones", s.milestoneHandler.List)
+				r.With(middleware.RequireAuth).Post("/milestones", s.milestoneHandler.Create)
+				r.With(middleware.RequireAuth).Patch("/milestones/{milestoneID}", s.milestoneHandler.Update)
+				r.With(middleware.RequireAuth).Delete("/milestones/{milestoneID}", s.milestoneHandler.Delete)
 			})
 		})
 
