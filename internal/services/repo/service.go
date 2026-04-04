@@ -263,13 +263,15 @@ func (s *Service) Update(ctx context.Context, repoID uuid.UUID, req models.Updat
 
 	query := fmt.Sprintf(`
 		UPDATE repositories SET %s WHERE id = $1
-		RETURNING id, owner_id, name, description, default_branch, visibility, language_stats, topics,
+		RETURNING id, owner_id,
+		          (SELECT username FROM users WHERE id = owner_id),
+		          name, description, default_branch, visibility, language_stats, topics,
 		          stars_count, forks_count, created_at, updated_at`,
 		strings.Join(setClauses, ", "))
 
 	repo := &models.Repository{}
 	err := s.db.QueryRow(ctx, query, args...).Scan(
-		&repo.ID, &repo.OwnerID, &repo.Name, &repo.Description,
+		&repo.ID, &repo.OwnerID, &repo.OwnerName, &repo.Name, &repo.Description,
 		&repo.DefaultBranch, &repo.Visibility, &repo.LanguageStats, &repo.Topics,
 		&repo.StarsCount, &repo.ForksCount, &repo.CreatedAt, &repo.UpdatedAt,
 	)
