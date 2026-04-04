@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { get, post } from "../lib/api";
 import RepoHeader from "../components/RepoHeader";
 
@@ -42,10 +42,11 @@ export default function NewPullPage() {
     enabled: !!owner && !!repo,
   });
 
-  // Set default target branch when repo loads
-  if (repoQuery.data && !targetBranch) {
-    setTargetBranch(repoQuery.data.default_branch);
-  }
+  useEffect(() => {
+    if (repoQuery.data && !targetBranch) {
+      setTargetBranch(repoQuery.data.default_branch);
+    }
+  }, [repoQuery.data]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
