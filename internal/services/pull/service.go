@@ -336,6 +336,15 @@ func (s *Service) Merge(ctx context.Context, repoID uuid.UUID, number int, merge
 	}
 
 	pr.MergedByName = mergerName
+
+	if req.DeleteBranch {
+		if err := s.git.DeleteBranch(ownerName, repoName, pr.SourceBranch); err != nil {
+			slog.Warn("failed to delete source branch after merge",
+				"branch", pr.SourceBranch, "error", err)
+			// Don't fail the merge — branch deletion is best-effort
+		}
+	}
+
 	return pr, nil
 }
 

@@ -46,8 +46,9 @@ type UpdatePullRequestRequest struct {
 }
 
 type MergePullRequestRequest struct {
-	Strategy string `json:"strategy"` // merge, squash, rebase
-	Message  string `json:"message"`  // custom merge commit message (optional)
+	Strategy     string `json:"strategy"`      // merge, squash, rebase
+	Message      string `json:"message"`       // custom merge commit message (optional)
+	DeleteBranch bool   `json:"delete_branch"` // delete source branch after merge
 }
 
 // PRDiffResponse is returned by the PR diff endpoint.
