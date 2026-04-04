@@ -764,6 +764,18 @@ func (s *Service) doRebaseMerge(r *gogit.Repository, owner, name, base string, b
 	if err != nil || len(mergeBaseCommits) == 0 {
 		return fmt.Errorf("cannot find common ancestor for rebase")
 	}
+
+	// Rebase is only safe when head is strictly ahead of base (base is an
+	// ancestor of head). If branches have truly diverged, replaying commits
+	// with their original TreeHash would silently lose base's changes.
+	isAncestor, err := baseCommit.IsAncestor(headCommit)
+	if err != nil {
+		return fmt.Errorf("check ancestor for rebase: %w", err)
+	}
+	if !isAncestor {
+		return fmt.Errorf("rebase not supported for diverged branches; use merge or squash")
+	}
+
 	mergeBaseSHA := mergeBaseCommits[0].Hash.String()
 
 	// Collect commits from head back to merge base (exclusive), oldest first
