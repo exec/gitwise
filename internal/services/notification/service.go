@@ -11,16 +11,22 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/gitwise-io/gitwise/internal/models"
+	"github.com/gitwise-io/gitwise/internal/websocket"
 )
 
 var ErrNotFound = errors.New("notification not found")
 
 type Service struct {
-	db *pgxpool.Pool
+	db  *pgxpool.Pool
+	hub *websocket.Hub
 }
 
-func NewService(db *pgxpool.Pool) *Service {
-	return &Service{db: db}
+func NewService(db *pgxpool.Pool, hub ...*websocket.Hub) *Service {
+	s := &Service{db: db}
+	if len(hub) > 0 {
+		s.hub = hub[0]
+	}
+	return s
 }
 
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, notifType, title, body, link string) (*models.Notification, error) {
@@ -43,6 +49,14 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, notifType, title
 	).Scan(&n.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("insert notification: %w", err)
+	}
+
+	if s.hub != nil {
+		msg, _ := json.Marshal(map[string]any{
+			"type": "notification",
+			"data": n,
+		})
+		s.hub.SendToUser(n.UserID, msg)
 	}
 
 	return n, nil

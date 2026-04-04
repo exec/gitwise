@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "../stores/auth";
+import NotificationBell from "./NotificationBell";
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user);
@@ -53,6 +54,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="nav-right">
           {isAuthenticated && user ? (
             <div className="user-menu">
+              <NotificationBell />
               <span className="username">{user.username}</span>
               <button className="btn btn-secondary btn-sm" onClick={handleLogout}>
                 Sign out
