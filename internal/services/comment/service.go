@@ -116,7 +116,7 @@ func (s *Service) Update(ctx context.Context, commentID, authorID uuid.UUID, req
 
 	comment := &models.Comment{}
 	err := s.db.QueryRow(ctx, `
-		UPDATE comments SET body = $2, updated_at = now()
+		UPDATE comments SET body_history = body_history || jsonb_build_array(jsonb_build_object('body', body, 'edited_at', now())), body = $2, updated_at = now()
 		WHERE id = $1 AND author_id = $3
 		RETURNING id, repo_id, issue_id, pr_id, author_id,
 		          (SELECT username FROM users WHERE id = author_id),

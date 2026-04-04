@@ -218,6 +218,7 @@ func (s *Service) Update(ctx context.Context, repoID uuid.UUID, number int, req 
 		argIdx++
 	}
 	if req.Body != nil {
+		setClauses = append(setClauses, "body_history = body_history || jsonb_build_array(jsonb_build_object('body', body, 'edited_at', now()))")
 		setClauses = append(setClauses, fmt.Sprintf("body = $%d", argIdx))
 		args = append(args, *req.Body)
 		argIdx++
