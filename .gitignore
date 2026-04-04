@@ -1,0 +1,37 @@
+# Go
+/gitwise
+/build/
+*.exe
+*.test
+*.out
+*.prof
+
+# Frontend
+web/node_modules/
+web/dist/
+
+# Data
+/data/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Tmp
+tmp/
+*.log
