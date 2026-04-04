@@ -23,8 +23,7 @@ func NewAuthHandler(users *user.Service, sessions *middleware.SessionManager) *A
 
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateUserRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_body", "invalid request body")
+	if handleDecodeError(w, decodeJSON(r, &req)) {
 		return
 	}
 
@@ -52,8 +51,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req models.LoginRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_body", "invalid request body")
+	if handleDecodeError(w, decodeJSON(r, &req)) {
 		return
 	}
 
@@ -111,8 +109,7 @@ func (h *AuthHandler) CreateToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.CreateTokenRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_body", "invalid request body")
+	if handleDecodeError(w, decodeJSON(r, &req)) {
 		return
 	}
 

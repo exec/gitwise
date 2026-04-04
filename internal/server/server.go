@@ -228,6 +228,8 @@ func (s *Server) spaHandler() http.HandlerFunc {
 	distPath := s.cfg.Frontend.DistPath
 	fileServer := http.FileServer(http.Dir(distPath))
 
+	absDistPath, _ := filepath.Abs(distPath)
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Don't serve SPA for git protocol or API paths
 		path := r.URL.Path
@@ -237,7 +239,12 @@ func (s *Server) spaHandler() http.HandlerFunc {
 		}
 
 		// Try to serve the file directly (JS, CSS, images, etc.)
-		filePath := filepath.Join(distPath, filepath.Clean(path))
+		// Resolve and verify the path stays within the dist directory.
+		filePath := filepath.Join(absDistPath, filepath.Clean("/"+path))
+		if !strings.HasPrefix(filePath, absDistPath+string(filepath.Separator)) && filePath != absDistPath {
+			http.NotFound(w, r)
+			return
+		}
 		if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
 			fileServer.ServeHTTP(w, r)
 			return

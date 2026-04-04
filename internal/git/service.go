@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 
 	"github.com/gitwise-io/gitwise/internal/models"
 )
+
+var errStopIteration = errors.New("stop iteration")
 
 type Service struct {
 	reposPath string
@@ -347,7 +350,7 @@ func (s *Service) ListCommits(owner, name, ref string, page, perPage int) ([]mod
 		}
 		if len(commits) >= perPage {
 			hasMore = true
-			return fmt.Errorf("stop") // break iteration
+			return errStopIteration
 		}
 
 		var parents []string
@@ -375,7 +378,7 @@ func (s *Service) ListCommits(owner, name, ref string, page, perPage int) ([]mod
 		idx++
 		return nil
 	})
-	if err != nil && err.Error() != "stop" {
+	if err != nil && !errors.Is(err, errStopIteration) {
 		return nil, false, fmt.Errorf("iterate commits: %w", err)
 	}
 

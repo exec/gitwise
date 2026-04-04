@@ -2,10 +2,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/gitwise-io/gitwise/internal/models"
 )
+
+// ErrBodyTooLarge is returned when the request body exceeds maxBodySize.
+var ErrBodyTooLarge = errors.New("request body too large")
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	resp := models.APIResponse{Data: data}
@@ -45,7 +49,29 @@ func decodeJSON(r *http.Request, v any) error {
 	r.Body = http.MaxBytesReader(nil, r.Body, maxBodySize)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	return dec.Decode(v)
+	err := dec.Decode(v)
+	if err != nil {
+		// MaxBytesReader returns *http.MaxBytesError when limit is exceeded
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return ErrBodyTooLarge
+		}
+	}
+	return err
+}
+
+// handleDecodeError writes the appropriate error for a decodeJSON failure.
+// Returns true if an error was written (caller should return).
+func handleDecodeError(w http.ResponseWriter, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrBodyTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body too large")
+	} else {
+		writeError(w, http.StatusBadRequest, "invalid_body", "invalid request body")
+	}
+	return true
 }
 
 // WriteUserJSON writes a user response (used by server.go for inline handlers).

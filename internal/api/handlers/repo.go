@@ -28,8 +28,7 @@ func (h *RepoHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.CreateRepoRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_body", "invalid request body")
+	if handleDecodeError(w, decodeJSON(r, &req)) {
 		return
 	}
 
@@ -123,8 +122,7 @@ func (h *RepoHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.UpdateRepoRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_body", "invalid request body")
+	if handleDecodeError(w, decodeJSON(r, &req)) {
 		return
 	}
 

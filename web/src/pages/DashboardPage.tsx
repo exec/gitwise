@@ -32,7 +32,7 @@ export default function DashboardPage() {
       </div>
 
       {isLoading && <p className="muted">Loading repositories...</p>}
-      {error && <div className="error-banner">{String(error)}</div>}
+      {error && <div className="error-banner">{error instanceof Error ? error.message : "Failed to load repositories"}</div>}
 
       {repos && repos.length === 0 && (
         <div className="empty-state">
