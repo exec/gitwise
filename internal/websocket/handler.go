@@ -3,6 +3,7 @@ package websocket
 import (
 	"log/slog"
 	"net/http"
+	"net/url"
 
 	"github.com/google/uuid"
 	ws "github.com/gorilla/websocket"
@@ -13,7 +14,17 @@ import (
 // nil for unauthenticated requests.
 func (h *Hub) HandleWS(getUserID func(r *http.Request) *uuid.UUID) http.HandlerFunc {
 	upgrader := ws.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
+		CheckOrigin: func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true // non-browser clients don't send Origin
+			}
+			u, err := url.Parse(origin)
+			if err != nil {
+				return false
+			}
+			return u.Host == r.Host
+		},
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
