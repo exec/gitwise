@@ -51,11 +51,19 @@ interface PRDiff {
   };
 }
 
+interface ReviewInlineComment {
+  path: string;
+  line: number;
+  side: string;
+  body: string;
+}
+
 interface Review {
   id: string;
   author_name: string;
   type: string;
   body: string;
+  comments: string | ReviewInlineComment[] | null; // JSON string or parsed array
   submitted_at: string;
 }
 
@@ -76,6 +84,7 @@ export default function PullDetailPage() {
   const [commentBody, setCommentBody] = useState("");
   const [reviewType, setReviewType] = useState("comment");
   const [reviewBody, setReviewBody] = useState("");
+  const [pendingInlineComments, setPendingInlineComments] = useState<Array<{path: string, line: number, side: string, body: string}>>([]);
 
   const prQuery = useQuery({
     queryKey: ["pull", owner, repo, number],
@@ -134,10 +143,11 @@ export default function PullDetailPage() {
   });
 
   const submitReview = useMutation({
-    mutationFn: (data: { type: string; body: string }) =>
+    mutationFn: (data: { type: string; body: string; comments?: Array<{path: string, line: number, side: string, body: string}> }) =>
       post(`/repos/${owner}/${repo}/pulls/${number}/reviews`, data),
     onSuccess: () => {
       setReviewBody("");
+      setPendingInlineComments([]);
       queryClient.invalidateQueries({
         queryKey: ["pull-reviews", owner, repo, number],
       });
@@ -176,6 +186,29 @@ export default function PullDetailPage() {
       });
     },
   });
+
+  function getExistingInlineComments(reviews?: Review[]): Array<{ path: string; line: number; side: string; body: string; author_name: string }> {
+    if (!reviews) return [];
+    const result: Array<{ path: string; line: number; side: string; body: string; author_name: string }> = [];
+    for (const rev of reviews) {
+      if (!rev.comments) continue;
+      let parsed: ReviewInlineComment[];
+      if (typeof rev.comments === "string") {
+        try {
+          parsed = JSON.parse(rev.comments);
+        } catch {
+          continue;
+        }
+      } else {
+        parsed = rev.comments;
+      }
+      if (!Array.isArray(parsed)) continue;
+      for (const c of parsed) {
+        result.push({ path: c.path, line: c.line, side: c.side, body: c.body, author_name: rev.author_name });
+      }
+    }
+    return result;
+  }
 
   if (prQuery.isLoading) return <p className="muted">Loading pull request...</p>;
   if (prQuery.error)
@@ -347,6 +380,7 @@ export default function PullDetailPage() {
                         submitReview.mutate({
                           type: reviewType,
                           body: reviewBody,
+                          comments: pendingInlineComments.length > 0 ? pendingInlineComments : undefined,
                         })
                       }
                       disabled={submitReview.isPending}
@@ -453,7 +487,16 @@ export default function PullDetailPage() {
                     -{diffQuery.data.stats.total_deletions}
                   </span>
                 </div>
-                <DiffViewer files={diffQuery.data.files} />
+                <DiffViewer
+                  files={diffQuery.data.files}
+                  onAddInlineComment={user && pr.status === "open" ? (path, line, side, body) => {
+                    setPendingInlineComments(prev => [...prev, { path, line, side, body }]);
+                  } : undefined}
+                  inlineComments={[
+                    ...pendingInlineComments.map(c => ({ ...c, author_name: user?.username ? `${user.username} (pending)` : "(pending)" })),
+                    ...getExistingInlineComments(reviewsQuery.data),
+                  ]}
+                />
               </>
             )}
           </div>

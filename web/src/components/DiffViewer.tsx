@@ -1,3 +1,5 @@
+import { Fragment, useState } from "react";
+
 interface DiffFile {
   path: string;
   old_path?: string;
@@ -7,11 +9,42 @@ interface DiffFile {
   patch?: string;
 }
 
-interface DiffViewerProps {
-  files: DiffFile[];
+interface InlineComment {
+  path: string;
+  line: number;
+  side: string;
+  body: string;
+  author_name?: string;
 }
 
-export default function DiffViewer({ files }: DiffViewerProps) {
+interface DiffViewerProps {
+  files: DiffFile[];
+  onAddInlineComment?: (path: string, line: number, side: string, body: string) => void;
+  inlineComments?: InlineComment[];
+}
+
+export default function DiffViewer({ files, onAddInlineComment, inlineComments }: DiffViewerProps) {
+  const [commentForm, setCommentForm] = useState<{path: string, line: number, side: string} | null>(null);
+  const [commentText, setCommentText] = useState("");
+
+  function handleSubmitComment() {
+    if (commentForm && onAddInlineComment && commentText.trim()) {
+      onAddInlineComment(commentForm.path, commentForm.line, commentForm.side, commentText);
+      setCommentForm(null);
+      setCommentText("");
+    }
+  }
+
+  function handleCancelComment() {
+    setCommentForm(null);
+    setCommentText("");
+  }
+
+  function getCommentsForLine(path: string, line: number, side: string): InlineComment[] {
+    if (!inlineComments) return [];
+    return inlineComments.filter(c => c.path === path && c.line === line && c.side === side);
+  }
+
   return (
     <div className="diff-viewer">
       {files.map((file, idx) => (
@@ -44,28 +77,93 @@ export default function DiffViewer({ files }: DiffViewerProps) {
             <div className="diff-content">
               <table className="diff-table">
                 <tbody>
-                  {parsePatch(file.patch).map((line, lineIdx) => (
-                    <tr key={lineIdx} className={`diff-line diff-${line.type}`}>
-                      <td className="diff-line-num diff-line-num-old">
-                        {line.oldNum ?? ""}
-                      </td>
-                      <td className="diff-line-num diff-line-num-new">
-                        {line.newNum ?? ""}
-                      </td>
-                      <td className="diff-line-content">
-                        <span className="diff-line-prefix">
-                          {line.type === "add"
-                            ? "+"
-                            : line.type === "del"
-                              ? "-"
-                              : line.type === "hunk"
-                                ? ""
-                                : " "}
-                        </span>
-                        {line.content}
-                      </td>
-                    </tr>
-                  ))}
+                  {parsePatch(file.patch).map((line, lineIdx) => {
+                    const lineNum = line.type === "del" ? line.oldNum : line.newNum;
+                    const side = line.type === "del" ? "left" : "right";
+                    const lineComments = lineNum != null
+                      ? getCommentsForLine(file.path, lineNum, side)
+                      : [];
+                    const isFormOpen = commentForm != null
+                      && commentForm.path === file.path
+                      && commentForm.line === lineNum
+                      && commentForm.side === side;
+
+                    return (
+                      <Fragment key={lineIdx}>
+                        <tr className={`diff-line diff-${line.type}`}>
+                          <td className="diff-line-num diff-line-num-old">
+                            {onAddInlineComment && line.type !== "hunk" && lineNum != null && (
+                              <button
+                                className="inline-comment-btn"
+                                onClick={() => setCommentForm({ path: file.path, line: lineNum, side })}
+                                title="Add comment"
+                              >
+                                +
+                              </button>
+                            )}
+                            {line.oldNum ?? ""}
+                          </td>
+                          <td className="diff-line-num diff-line-num-new">
+                            {line.newNum ?? ""}
+                          </td>
+                          <td className="diff-line-content">
+                            <span className="diff-line-prefix">
+                              {line.type === "add"
+                                ? "+"
+                                : line.type === "del"
+                                  ? "-"
+                                  : line.type === "hunk"
+                                    ? ""
+                                    : " "}
+                            </span>
+                            {line.content}
+                          </td>
+                        </tr>
+                        {lineComments.length > 0 && (
+                          <tr className="inline-comment-row">
+                            <td colSpan={3}>
+                              {lineComments.map((c, ci) => (
+                                <div key={ci} className="inline-comment-display">
+                                  {c.author_name && <strong>{c.author_name}</strong>}
+                                  {c.body}
+                                </div>
+                              ))}
+                            </td>
+                          </tr>
+                        )}
+                        {isFormOpen && (
+                          <tr className="inline-comment-row">
+                            <td colSpan={3}>
+                              <div className="inline-comment-form">
+                                <textarea
+                                  autoFocus
+                                  rows={3}
+                                  placeholder="Write a comment..."
+                                  value={commentText}
+                                  onChange={(e) => setCommentText(e.target.value)}
+                                />
+                                <div className="inline-comment-actions">
+                                  <button
+                                    className="btn btn-primary btn-sm"
+                                    disabled={!commentText.trim()}
+                                    onClick={handleSubmitComment}
+                                  >
+                                    Add Comment
+                                  </button>
+                                  <button
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={handleCancelComment}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
