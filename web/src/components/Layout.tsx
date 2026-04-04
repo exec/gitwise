@@ -1,4 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "../stores/auth";
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -6,9 +7,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const handleLogout = async () => {
-    await logout();
+    try {
+      await logout();
+    } catch {
+      // Clear local state even if server call fails
+      useAuthStore.setState({ user: null, isAuthenticated: false });
+    }
+    queryClient.clear();
     navigate("/login");
   };
 

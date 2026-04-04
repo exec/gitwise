@@ -41,7 +41,15 @@ async function request<T>(
   }
 
   const res = await fetch(`${BASE}${path}`, opts);
-  const envelope: ApiEnvelope<T> = await res.json();
+
+  let envelope: ApiEnvelope<T>;
+  try {
+    envelope = await res.json();
+  } catch {
+    throw new ApiError(res.status, [
+      { code: "parse_error", message: `Server returned non-JSON response (${res.status})` },
+    ]);
+  }
 
   if (!res.ok || envelope.errors?.length) {
     throw new ApiError(

@@ -43,6 +43,9 @@ func (s *Service) Create(ctx context.Context, req models.CreateUserRequest) (*mo
 	if len(req.Password) < 8 {
 		return nil, fmt.Errorf("%w: password must be at least 8 characters", ErrInvalidInput)
 	}
+	if len(req.Password) > 128 {
+		return nil, fmt.Errorf("%w: password must be at most 128 characters", ErrInvalidInput)
+	}
 	if !strings.Contains(req.Email, "@") {
 		return nil, fmt.Errorf("%w: invalid email address", ErrInvalidInput)
 	}
@@ -257,6 +260,9 @@ func (s *Service) ListTokens(ctx context.Context, userID uuid.UUID) ([]models.AP
 			return nil, fmt.Errorf("scan token: %w", err)
 		}
 		tokens = append(tokens, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tokens: %w", err)
 	}
 	return tokens, nil
 }

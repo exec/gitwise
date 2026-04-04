@@ -62,8 +62,8 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPHandler) handleInfoRefs(w http.ResponseWriter, r *http.Request, repoPath string) {
 	serviceName := r.URL.Query().Get("service")
-	if serviceName == "" {
-		http.Error(w, "dumb protocol not supported", http.StatusForbidden)
+	if serviceName != "git-upload-pack" && serviceName != "git-receive-pack" {
+		http.Error(w, "unsupported service", http.StatusBadRequest)
 		return
 	}
 

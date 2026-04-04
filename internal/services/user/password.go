@@ -42,7 +42,10 @@ func verifyPassword(password, encoded string) bool {
 	var memory uint32
 	var time uint32
 	var threads uint8
-	fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &time, &threads)
+	n, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &time, &threads)
+	if n != 3 || err != nil {
+		return false
+	}
 
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {

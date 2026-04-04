@@ -39,8 +39,10 @@ func writeFieldError(w http.ResponseWriter, status int, code, message, field str
 	json.NewEncoder(w).Encode(resp)
 }
 
+const maxBodySize = 1 << 20 // 1 MB
+
 func decodeJSON(r *http.Request, v any) error {
-	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(nil, r.Body, maxBodySize)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)

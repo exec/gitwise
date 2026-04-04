@@ -157,6 +157,9 @@ func (s *Service) ListByOwner(ctx context.Context, owner string, limit int) ([]m
 		}
 		repos = append(repos, r)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate repos: %w", err)
+	}
 	return repos, nil
 }
 
@@ -191,6 +194,9 @@ func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID, limit int) 
 			return nil, fmt.Errorf("scan repo: %w", err)
 		}
 		repos = append(repos, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate repos: %w", err)
 	}
 	return repos, nil
 }
