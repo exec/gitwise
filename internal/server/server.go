@@ -20,7 +20,12 @@ import (
 	"github.com/gitwise-io/gitwise/internal/config"
 	"github.com/gitwise-io/gitwise/internal/git"
 	"github.com/gitwise-io/gitwise/internal/middleware"
+	"github.com/gitwise-io/gitwise/internal/services/comment"
+	"github.com/gitwise-io/gitwise/internal/services/issue"
+	"github.com/gitwise-io/gitwise/internal/services/label"
+	"github.com/gitwise-io/gitwise/internal/services/pull"
 	"github.com/gitwise-io/gitwise/internal/services/repo"
+	"github.com/gitwise-io/gitwise/internal/services/review"
 	"github.com/gitwise-io/gitwise/internal/services/user"
 )
 
@@ -32,9 +37,14 @@ type Server struct {
 	http   *http.Server
 
 	// Services
-	userSvc *user.Service
-	repoSvc *repo.Service
-	gitSvc  *git.Service
+	userSvc    *user.Service
+	repoSvc    *repo.Service
+	gitSvc     *git.Service
+	issueSvc   *issue.Service
+	pullSvc    *pull.Service
+	reviewSvc  *review.Service
+	commentSvc *comment.Service
+	labelSvc   *label.Service
 
 	// Middleware
 	sessions *middleware.SessionManager
@@ -44,6 +54,9 @@ type Server struct {
 	authHandler   *handlers.AuthHandler
 	repoHandler   *handlers.RepoHandler
 	browseHandler *handlers.BrowseHandler
+	issueHandler  *handlers.IssueHandler
+	pullHandler   *handlers.PullHandler
+	labelHandler  *handlers.LabelHandler
 
 	// Git protocol
 	gitHTTP *git.HTTPHandler
@@ -74,10 +87,20 @@ func (s *Server) initServices() {
 	s.sessions = middleware.NewSessionManager(s.rdb)
 	s.auth = middleware.NewAuth(s.sessions, s.userSvc)
 
+	// Phase 2 services
+	s.issueSvc = issue.NewService(s.db)
+	s.pullSvc = pull.NewService(s.db, s.gitSvc)
+	s.reviewSvc = review.NewService(s.db)
+	s.commentSvc = comment.NewService(s.db)
+	s.labelSvc = label.NewService(s.db)
+
 	// Handlers
 	s.authHandler = handlers.NewAuthHandler(s.userSvc, s.sessions)
 	s.repoHandler = handlers.NewRepoHandler(s.repoSvc)
 	s.browseHandler = handlers.NewBrowseHandler(s.repoSvc, s.gitSvc)
+	s.issueHandler = handlers.NewIssueHandler(s.repoSvc, s.issueSvc, s.commentSvc)
+	s.pullHandler = handlers.NewPullHandler(s.repoSvc, s.pullSvc, s.reviewSvc, s.commentSvc)
+	s.labelHandler = handlers.NewLabelHandler(s.repoSvc, s.labelSvc)
 
 	// Git HTTP protocol
 	s.gitHTTP = git.NewHTTPHandler(s.gitSvc, func(username, password string) (string, bool) {
@@ -150,15 +173,35 @@ func (s *Server) setupRoutes() {
 				// Branches
 				r.Get("/branches", s.browseHandler.ListBranches)
 
-				// Pull requests (stub)
-				r.Post("/pulls", handleNotImplemented)
-				r.Get("/pulls/{number}", handleNotImplemented)
-				r.Post("/pulls/{number}/reviews", handleNotImplemented)
-				r.Put("/pulls/{number}/merge", handleNotImplemented)
+				// Pull requests
+				r.Get("/pulls", s.pullHandler.List)
+				r.With(middleware.RequireAuth).Post("/pulls", s.pullHandler.Create)
+				r.Route("/pulls/{number}", func(r chi.Router) {
+					r.Get("/", s.pullHandler.Get)
+					r.With(middleware.RequireAuth).Patch("/", s.pullHandler.Update)
+					r.With(middleware.RequireAuth).Put("/merge", s.pullHandler.Merge)
+					r.Get("/diff", s.pullHandler.GetDiff)
+					r.Get("/reviews", s.pullHandler.ListReviews)
+					r.With(middleware.RequireAuth).Post("/reviews", s.pullHandler.CreateReview)
+					r.Get("/comments", s.pullHandler.ListComments)
+					r.With(middleware.RequireAuth).Post("/comments", s.pullHandler.CreateComment)
+				})
 
-				// Issues (stub)
-				r.Post("/issues", handleNotImplemented)
-				r.Get("/issues/{number}", handleNotImplemented)
+				// Issues
+				r.Get("/issues", s.issueHandler.List)
+				r.With(middleware.RequireAuth).Post("/issues", s.issueHandler.Create)
+				r.Route("/issues/{number}", func(r chi.Router) {
+					r.Get("/", s.issueHandler.Get)
+					r.With(middleware.RequireAuth).Patch("/", s.issueHandler.Update)
+					r.Get("/comments", s.issueHandler.ListComments)
+					r.With(middleware.RequireAuth).Post("/comments", s.issueHandler.CreateComment)
+				})
+
+				// Labels
+				r.Get("/labels", s.labelHandler.List)
+				r.With(middleware.RequireAuth).Post("/labels", s.labelHandler.Create)
+				r.With(middleware.RequireAuth).Patch("/labels/{labelID}", s.labelHandler.Update)
+				r.With(middleware.RequireAuth).Delete("/labels/{labelID}", s.labelHandler.Delete)
 			})
 		})
 

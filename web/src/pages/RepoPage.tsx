@@ -1,6 +1,7 @@
 import { useParams, useLocation, Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { get } from "../lib/api";
+import RepoHeader from "../components/RepoHeader";
 
 interface Repo {
   id: string;
@@ -133,38 +134,11 @@ export default function RepoPage() {
 
   return (
     <div className="repo-page">
-      <div className="repo-header">
-        <div className="repo-title">
-          <h1>
-            <Link to={`/${owner}`} className="owner-link">
-              {repoData.owner_name}
-            </Link>
-            {" / "}
-            <Link to={`/${owner}/${repo}`}>{repoData.name}</Link>
-          </h1>
-          <span className={`badge badge-${repoData.visibility}`}>
-            {repoData.visibility}
-          </span>
-        </div>
-        {repoData.description && (
-          <p className="repo-description">{repoData.description}</p>
-        )}
-      </div>
-
-      <div className="tab-nav">
-        <Link
-          to={`/${owner}/${repo}`}
-          className={`tab ${tab === "code" ? "tab-active" : ""}`}
-        >
-          Code
-        </Link>
-        <Link
-          to={`/${owner}/${repo}/commits`}
-          className={`tab ${tab === "commits" ? "tab-active" : ""}`}
-        >
-          Commits
-        </Link>
-      </div>
+      <RepoHeader
+        owner={owner!}
+        repo={repo!}
+        activeTab={tab === "commits" ? "commits" : "code"}
+      />
 
       {tab === "code" && (
         <div className="code-tab">

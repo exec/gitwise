@@ -517,6 +517,247 @@ func (s *Service) GetCommit(owner, name, sha string) (*models.CommitDetail, erro
 	return detail, nil
 }
 
+// CompareBranches returns the diff between base and head branches.
+// This is used for pull request diffs — it shows what head introduces on top of base.
+func (s *Service) CompareBranches(owner, name, base, head string) (*models.PRDiffResponse, error) {
+	r, err := s.openRepo(owner, name)
+	if err != nil {
+		return nil, err
+	}
+
+	baseSHA, err := s.ResolveRef(owner, name, base)
+	if err != nil {
+		return nil, fmt.Errorf("resolve base: %w", err)
+	}
+	headSHA, err := s.ResolveRef(owner, name, head)
+	if err != nil {
+		return nil, fmt.Errorf("resolve head: %w", err)
+	}
+
+	baseCommit, err := r.CommitObject(plumbing.NewHash(baseSHA))
+	if err != nil {
+		return nil, fmt.Errorf("get base commit: %w", err)
+	}
+	headCommit, err := r.CommitObject(plumbing.NewHash(headSHA))
+	if err != nil {
+		return nil, fmt.Errorf("get head commit: %w", err)
+	}
+
+	// Find merge base
+	mergeBaseCommits, err := baseCommit.MergeBase(headCommit)
+	if err != nil || len(mergeBaseCommits) == 0 {
+		// No common ancestor — diff entire head tree against empty
+		mergeBaseCommits = nil
+	}
+
+	// Get diff from merge-base (or base) to head
+	var fromTree *object.Tree
+	if len(mergeBaseCommits) > 0 {
+		fromTree, _ = mergeBaseCommits[0].Tree()
+	} else {
+		fromTree, _ = baseCommit.Tree()
+	}
+	toTree, err := headCommit.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("get head tree: %w", err)
+	}
+
+	resp := &models.PRDiffResponse{}
+
+	if fromTree != nil {
+		changes, err := fromTree.Diff(toTree)
+		if err == nil {
+			for _, change := range changes {
+				df := models.DiffFile{}
+				action, err := change.Action()
+				if err == nil {
+					switch action.String() {
+					case "Insert":
+						df.Status = "added"
+					case "Delete":
+						df.Status = "deleted"
+					case "Modify":
+						df.Status = "modified"
+					}
+				}
+
+				from := change.From
+				to := change.To
+				if to.Name != "" {
+					df.Path = to.Name
+				} else {
+					df.Path = from.Name
+				}
+				if from.Name != "" && to.Name != "" && from.Name != to.Name {
+					df.OldPath = from.Name
+					df.Status = "renamed"
+				}
+
+				patch, err := change.Patch()
+				if err == nil {
+					df.Patch = patch.String()
+					for _, stat := range patch.Stats() {
+						df.Insertions += stat.Addition
+						df.Deletions += stat.Deletion
+					}
+				}
+
+				resp.Files = append(resp.Files, df)
+				resp.Stats.TotalFiles++
+				resp.Stats.TotalAdditions += df.Insertions
+				resp.Stats.TotalDeletions += df.Deletions
+			}
+		}
+	}
+
+	// Collect commits from head back to merge-base
+	var mergeBaseSHA string
+	if len(mergeBaseCommits) > 0 {
+		mergeBaseSHA = mergeBaseCommits[0].Hash.String()
+	}
+
+	iter, err := r.Log(&gogit.LogOptions{From: plumbing.NewHash(headSHA)})
+	if err == nil {
+		_ = iter.ForEach(func(c *object.Commit) error {
+			if c.Hash.String() == mergeBaseSHA || c.Hash.String() == baseSHA {
+				return errStopIteration
+			}
+
+			var parents []string
+			for _, p := range c.ParentHashes {
+				parents = append(parents, p.String())
+			}
+
+			resp.Commits = append(resp.Commits, models.Commit{
+				SHA:     c.Hash.String(),
+				Message: c.Message,
+				Author: models.GitUser{
+					Name:  c.Author.Name,
+					Email: c.Author.Email,
+					Date:  c.Author.When,
+				},
+				Committer: models.GitUser{
+					Name:  c.Committer.Name,
+					Email: c.Committer.Email,
+					Date:  c.Committer.When,
+				},
+				Parents: parents,
+				TreeSHA: c.TreeHash.String(),
+				Date:    c.Author.When,
+			})
+			resp.Stats.TotalCommits++
+			return nil
+		})
+	}
+
+	return resp, nil
+}
+
+// MergeBranches merges head branch into base branch using the given strategy.
+func (s *Service) MergeBranches(owner, name, base, head, strategy, message, authorName, authorEmail string) error {
+	r, err := s.openRepo(owner, name)
+	if err != nil {
+		return err
+	}
+
+	baseSHA, err := s.ResolveRef(owner, name, base)
+	if err != nil {
+		return fmt.Errorf("resolve base: %w", err)
+	}
+	headSHA, err := s.ResolveRef(owner, name, head)
+	if err != nil {
+		return fmt.Errorf("resolve head: %w", err)
+	}
+
+	baseCommit, err := r.CommitObject(plumbing.NewHash(baseSHA))
+	if err != nil {
+		return fmt.Errorf("get base commit: %w", err)
+	}
+	headCommit, err := r.CommitObject(plumbing.NewHash(headSHA))
+	if err != nil {
+		return fmt.Errorf("get head commit: %w", err)
+	}
+
+	sig := &object.Signature{
+		Name:  authorName,
+		Email: authorEmail,
+		When:  time.Now(),
+	}
+
+	switch strategy {
+	case "merge":
+		return s.doMergeCommit(r, owner, name, base, baseCommit, headCommit, message, sig)
+	case "squash":
+		return s.doSquashMerge(r, owner, name, base, baseCommit, headCommit, message, sig)
+	case "rebase":
+		return fmt.Errorf("rebase merge strategy is not yet supported; use merge or squash")
+	default:
+		return fmt.Errorf("unknown merge strategy: %s", strategy)
+	}
+}
+
+func (s *Service) doMergeCommit(r *gogit.Repository, owner, name, base string, baseCommit, headCommit *object.Commit, message string, sig *object.Signature) error {
+	// Use head's tree as the merge result (fast-forward-like for simple cases)
+	// For a real 3-way merge we'd need to do conflict resolution.
+	// Check if head is already ahead of base (fast-forward possible)
+	isAncestor, err := baseCommit.IsAncestor(headCommit)
+	if err != nil {
+		return fmt.Errorf("check ancestor: %w", err)
+	}
+
+	var newHash plumbing.Hash
+	if isAncestor {
+		// Fast-forward: create a merge commit with head's tree
+		commit := r.Storer
+		newCommit := &object.Commit{
+			Author:       *sig,
+			Committer:    *sig,
+			Message:      message,
+			TreeHash:     headCommit.TreeHash,
+			ParentHashes: []plumbing.Hash{baseCommit.Hash, headCommit.Hash},
+		}
+
+		obj := commit.NewEncodedObject()
+		if err := newCommit.Encode(obj); err != nil {
+			return fmt.Errorf("encode merge commit: %w", err)
+		}
+		newHash, err = commit.SetEncodedObject(obj)
+		if err != nil {
+			return fmt.Errorf("store merge commit: %w", err)
+		}
+	} else {
+		return fmt.Errorf("non-fast-forward merge not supported: rebase or squash instead")
+	}
+
+	// Update base branch ref
+	ref := plumbing.NewHashReference(plumbing.NewBranchReferenceName(base), newHash)
+	return r.Storer.SetReference(ref)
+}
+
+func (s *Service) doSquashMerge(r *gogit.Repository, owner, name, base string, baseCommit, headCommit *object.Commit, message string, sig *object.Signature) error {
+	// Create a single commit on base with head's tree
+	commit := r.Storer
+	newCommit := &object.Commit{
+		Author:       *sig,
+		Committer:    *sig,
+		Message:      message,
+		TreeHash:     headCommit.TreeHash,
+		ParentHashes: []plumbing.Hash{baseCommit.Hash},
+	}
+
+	obj := commit.NewEncodedObject()
+	if err := newCommit.Encode(obj); err != nil {
+		return fmt.Errorf("encode squash commit: %w", err)
+	}
+	newHash, err := commit.SetEncodedObject(obj)
+	if err != nil {
+		return fmt.Errorf("store squash commit: %w", err)
+	}
+
+	ref := plumbing.NewHashReference(plumbing.NewBranchReferenceName(base), newHash)
+	return r.Storer.SetReference(ref)
+}
+
 // ListBranches returns all branches.
 func (s *Service) ListBranches(owner, name string) ([]models.Branch, error) {
 	r, err := s.openRepo(owner, name)

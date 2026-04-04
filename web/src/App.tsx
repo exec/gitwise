@@ -6,6 +6,12 @@ import RegisterPage from "./pages/RegisterPage";
 import DashboardPage from "./pages/DashboardPage";
 import NewRepoPage from "./pages/NewRepoPage";
 import RepoPage from "./pages/RepoPage";
+import IssueListPage from "./pages/IssueListPage";
+import IssueDetailPage from "./pages/IssueDetailPage";
+import NewIssuePage from "./pages/NewIssuePage";
+import PullListPage from "./pages/PullListPage";
+import PullDetailPage from "./pages/PullDetailPage";
+import NewPullPage from "./pages/NewPullPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -37,10 +43,42 @@ export default function App() {
             </RequireAuth>
           }
         />
+
+        {/* Repo pages */}
         <Route path="/:owner/:repo" element={<RepoPage />} />
         <Route path="/:owner/:repo/tree/:ref/*" element={<RepoPage />} />
         <Route path="/:owner/:repo/blob/:ref/*" element={<RepoPage />} />
         <Route path="/:owner/:repo/commits" element={<RepoPage />} />
+
+        {/* Issues */}
+        <Route path="/:owner/:repo/issues" element={<IssueListPage />} />
+        <Route
+          path="/:owner/:repo/issues/new"
+          element={
+            <RequireAuth>
+              <NewIssuePage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/:owner/:repo/issues/:number"
+          element={<IssueDetailPage />}
+        />
+
+        {/* Pull Requests */}
+        <Route path="/:owner/:repo/pulls" element={<PullListPage />} />
+        <Route
+          path="/:owner/:repo/pulls/new"
+          element={
+            <RequireAuth>
+              <NewPullPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/:owner/:repo/pulls/:number"
+          element={<PullDetailPage />}
+        />
       </Routes>
     </Layout>
   );
