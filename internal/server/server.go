@@ -32,6 +32,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/pull"
 	"github.com/gitwise-io/gitwise/internal/services/repo"
 	"github.com/gitwise-io/gitwise/internal/services/review"
+	"github.com/gitwise-io/gitwise/internal/services/embedding"
 	"github.com/gitwise-io/gitwise/internal/services/search"
 	"github.com/gitwise-io/gitwise/internal/services/user"
 	"github.com/gitwise-io/gitwise/internal/services/webhook"
@@ -61,6 +62,7 @@ type Server struct {
 	searchSvc     *search.Service
 	orgSvc        *org.Service
 	webhookSvc    *webhook.Service
+	embeddingSvc  *embedding.Service
 
 	// WebSocket
 	wsHub *gitwisews.Hub
@@ -145,8 +147,17 @@ func (s *Server) initServices() {
 	s.profileHandler = handlers.NewProfileHandler(s.userSvc)
 	s.activityHandler = handlers.NewActivityHandler(s.repoSvc, s.activitySvc, s.userSvc)
 
+	// Embedding service
+	var embProvider embedding.Provider
+	if s.cfg.Embedding.Provider == "openai" && s.cfg.Embedding.APIKey != "" {
+		embProvider = embedding.NewOpenAIProvider(s.cfg.Embedding.APIKey, s.cfg.Embedding.Model, s.cfg.Embedding.Dimensions)
+		slog.Info("embedding provider enabled", "provider", "openai", "model", s.cfg.Embedding.Model)
+	}
+	s.embeddingSvc = embedding.NewService(s.db, embProvider)
+
 	// Search service
 	s.searchSvc = search.NewService(s.db, s.gitSvc)
+	s.searchSvc.SetEmbeddingService(s.embeddingSvc)
 	s.searchHandler = handlers.NewSearchHandler(s.searchSvc, s.repoSvc)
 
 	// Org service
@@ -343,6 +354,11 @@ func (s *Server) Start() error {
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.http.Shutdown(ctx)
+}
+
+// EmbeddingService returns the embedding service for use by the embedding worker.
+func (s *Server) EmbeddingService() *embedding.Service {
+	return s.embeddingSvc
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

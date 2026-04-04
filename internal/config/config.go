@@ -4,16 +4,26 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 )
 
 type Config struct {
-	Port     int
-	Host     string
-	Database DatabaseConfig
-	Redis    RedisConfig
-	Git      GitConfig
-	Frontend FrontendConfig
-	Secret   string
+	Port      int
+	Host      string
+	Database  DatabaseConfig
+	Redis     RedisConfig
+	Git       GitConfig
+	Frontend  FrontendConfig
+	Embedding EmbeddingConfig
+	Secret    string
+}
+
+type EmbeddingConfig struct {
+	Provider       string
+	APIKey         string
+	Model          string
+	Dimensions     int
+	WorkerInterval time.Duration
 }
 
 type DatabaseConfig struct {
@@ -76,6 +86,13 @@ func Load() *Config {
 		Frontend: FrontendConfig{
 			DistPath: envStr("GITWISE_FRONTEND_DIST", "./web/dist"),
 		},
+		Embedding: EmbeddingConfig{
+			Provider:       envStr("EMBEDDING_PROVIDER", ""),
+			APIKey:         envStr("EMBEDDING_API_KEY", ""),
+			Model:          envStr("EMBEDDING_MODEL", "text-embedding-3-small"),
+			Dimensions:     envInt("EMBEDDING_DIMENSIONS", 1536),
+			WorkerInterval: envDuration("EMBEDDING_WORKER_INTERVAL", 5*time.Minute),
+		},
 	}
 }
 
@@ -90,6 +107,15 @@ func envInt(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
 		}
 	}
 	return fallback

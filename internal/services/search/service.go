@@ -13,11 +13,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/gitwise-io/gitwise/internal/git"
+	"github.com/gitwise-io/gitwise/internal/services/embedding"
 )
 
 type Service struct {
-	db    *pgxpool.Pool
-	gitSv *git.Service
+	db           *pgxpool.Pool
+	gitSv        *git.Service
+	embeddingSvc *embedding.Service
 }
 
 func NewService(db *pgxpool.Pool, gitSvc *git.Service) *Service {

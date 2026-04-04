@@ -15,6 +15,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/config"
 	"github.com/gitwise-io/gitwise/internal/database"
 	"github.com/gitwise-io/gitwise/internal/server"
+	"github.com/gitwise-io/gitwise/internal/workers"
 )
 
 func main() {
@@ -57,6 +58,10 @@ func main() {
 
 	srv := server.New(cfg, db, rdb)
 
+	// Embedding worker
+	embWorker := workers.NewEmbeddingWorker(srv.EmbeddingService(), cfg.Embedding.WorkerInterval)
+	embWorker.Start()
+
 	// Graceful shutdown
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
@@ -70,6 +75,8 @@ func main() {
 
 	sig := <-shutdown
 	slog.Info("shutting down", "signal", sig)
+
+	embWorker.Stop()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
