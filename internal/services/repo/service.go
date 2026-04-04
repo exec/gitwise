@@ -237,11 +237,20 @@ func (s *Service) Update(ctx context.Context, repoID uuid.UUID, req models.Updat
 		argIdx++
 	}
 	if req.Visibility != nil {
+		switch *req.Visibility {
+		case "public", "private":
+			// valid
+		default:
+			return nil, fmt.Errorf("%w: visibility must be public or private", ErrInvalidName)
+		}
 		setClauses = append(setClauses, fmt.Sprintf("visibility = $%d", argIdx))
 		args = append(args, *req.Visibility)
 		argIdx++
 	}
 	if req.DefaultBranch != nil {
+		if err := git.ValidateBranchName(*req.DefaultBranch); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidName, err)
+		}
 		setClauses = append(setClauses, fmt.Sprintf("default_branch = $%d", argIdx))
 		args = append(args, *req.DefaultBranch)
 		argIdx++

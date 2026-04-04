@@ -228,7 +228,13 @@ func (s *Server) spaHandler() http.HandlerFunc {
 	distPath := s.cfg.Frontend.DistPath
 	fileServer := http.FileServer(http.Dir(distPath))
 
-	absDistPath, _ := filepath.Abs(distPath)
+	absDistPath, err := filepath.Abs(distPath)
+	if err != nil {
+		slog.Error("failed to resolve frontend dist path", "path", distPath, "error", err)
+		return func(w http.ResponseWriter, r *http.Request) {
+			http.NotFound(w, r)
+		}
+	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Don't serve SPA for git protocol or API paths

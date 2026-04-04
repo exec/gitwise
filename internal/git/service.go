@@ -187,15 +187,17 @@ func (s *Service) openRepo(owner, name string) (*gogit.Repository, error) {
 	return r, nil
 }
 
-// ResolveRef resolves a ref name (branch, tag, or SHA) to a commit hash.
+// ResolveRef resolves a ref name (branch, tag, or full SHA hex) to a commit hash.
+// Only branches, tags, and 40-char hex SHAs are accepted — arbitrary revision
+// syntax (HEAD~3, @{upstream}, etc.) is rejected for safety.
 func (s *Service) ResolveRef(owner, name, ref string) (string, error) {
 	r, err := s.openRepo(owner, name)
 	if err != nil {
 		return "", err
 	}
 
-	// Try as a full hash first
-	if len(ref) == 40 {
+	// Try as a full hex SHA
+	if len(ref) == 40 && isHexString(ref) {
 		return ref, nil
 	}
 
@@ -211,12 +213,16 @@ func (s *Service) ResolveRef(owner, name, ref string) (string, error) {
 		return h.String(), nil
 	}
 
-	// Try as revision
-	h, err = r.ResolveRevision(plumbing.Revision(ref))
-	if err != nil {
-		return "", fmt.Errorf("resolve ref %q: %w", ref, err)
+	return "", fmt.Errorf("resolve ref %q: ref not found", ref)
+}
+
+func isHexString(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
 	}
-	return h.String(), nil
+	return true
 }
 
 // ListTree returns the entries of a tree at the given path and ref.
