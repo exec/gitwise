@@ -100,15 +100,16 @@ func (h *IssueHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := r.URL.Query().Get("status")
+	cursor := r.URL.Query().Get("cursor")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 
-	issues, err := h.issues.List(r.Context(), repository.ID, status, limit)
+	issues, nextCursor, err := h.issues.List(r.Context(), repository.ID, status, cursor, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to list issues")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, issues)
+	writeJSONMeta(w, http.StatusOK, issues, &models.ResponseMeta{NextCursor: nextCursor})
 }
 
 func (h *IssueHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -247,12 +248,13 @@ func (h *IssueHandler) ListComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cursor := r.URL.Query().Get("cursor")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	comments, err := h.comments.ListByIssue(r.Context(), iss.ID, limit)
+	comments, nextCursor, err := h.comments.ListByIssue(r.Context(), iss.ID, cursor, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to list comments")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, comments)
+	writeJSONMeta(w, http.StatusOK, comments, &models.ResponseMeta{NextCursor: nextCursor})
 }
