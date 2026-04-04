@@ -44,7 +44,7 @@ export default function IssueListPage() {
 
   useEffect(() => {
     if (issuesQuery.data) {
-      const newItems = issuesQuery.data.data;
+      const newItems = issuesQuery.data.data ?? [];
       if (cursor) {
         setItems((prev) => [...prev, ...newItems]);
       } else {

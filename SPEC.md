@@ -335,17 +335,45 @@ Goal: Pull requests, code review, and issues — the collaboration layer.
 - Notifications: in-app notification system, mention detection, subscription management
 - WebSocket: real-time PR updates, new comments, status changes
 
-### 10.3 Phase 3: Search & Intelligence (Weeks 17–22)
+### 10.3 Phase 3: Profiles, Search & Intelligence (Weeks 17–22)
 
-Goal: Full-text, semantic, and code search. Embedding pipeline. Activity feeds.
+Goal: User profiles, full-text search, semantic search, code search, activity feeds, and real-time notifications.
+
+#### 10.3.1 User Profiles
+
+- Profile page (`/users/:username`): avatar, bio, full name, join date, public repos, contribution activity
+- Profile editing: update full_name, bio, avatar_url via PATCH /api/v1/user/profile (authenticated)
+- Contribution graph: GitHub-style heatmap of commits/PRs/issues per day (query commit_metadata + issues + pull_requests by author)
+- User activity feed: chronological list of user's public actions (opened issues, created PRs, submitted reviews, pushed commits)
+- Pinned repositories: user can select up to 6 repos to feature on their profile (stored in user metadata JSONB)
+- Organization profiles: org page showing members, teams, and repos (uses existing organizations/org_members tables)
+
+#### 10.3.2 Search
 
 - Full-text search: tsvector indexing on all text fields, pg_trgm for fuzzy matching
 - Embedding pipeline: background job queue, provider-agnostic embedding generation, pgvector storage
 - Semantic search: vector similarity search, reciprocal rank fusion with keyword results
 - Code search: trigram indexing of file content, language-filtered search, regex support
 - Unified search UI: combined results page, faceted filtering, code snippet previews
+
+#### 10.3.3 Activity & Real-time
+
 - Activity feed: per-repo and per-user activity streams, event timeline
 - Webhook system: event dispatch, delivery tracking, retry logic, secret verification
+- Wire WebSocket hub to notification.Create: push notifications in real-time (hub exists but isn't called yet)
+- Notification UI: bell icon in nav, dropdown with unread notifications, mark-read
+
+#### 10.3.4 Phase 2 Cleanup (carry-forward from review)
+
+- Extract `encodeCursor`/`decodeCursor` to shared pagination utility
+- Add composite cursor `(created_at, id)` for stable pagination
+- Validate `required_reviews >= 0` on branch protection create/update
+- Wire `hub.SendToUser` into `notification.Create` for real-time push
+- Add "remove" button on pending inline comments before review submit
+- Convert syntax highlight colors to CSS variables (light mode support)
+- Rename `read` column in notifications table to `is_read` (reserved word)
+- Add glob/pattern matching to branch protection `Check` (currently exact match only)
+- Make milestone duplicate-title error a proper sentinel (currently falls through to 500)
 
 ### 10.4 Phase 4: Polish & Release (Weeks 23–26)
 

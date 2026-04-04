@@ -9,6 +9,7 @@ RUN npm run build
 # Stage 2: Build backend
 FROM golang:1.24-alpine AS backend
 RUN apk add --no-cache git
+ENV GOTOOLCHAIN=auto
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -22,6 +23,8 @@ RUN apk add --no-cache git ca-certificates tzdata && \
     addgroup -S gitwise && adduser -S gitwise -G gitwise && \
     mkdir -p /data/repos && chown gitwise:gitwise /data/repos
 COPY --from=backend /gitwise /usr/local/bin/gitwise
+COPY --from=frontend /app/web/dist /app/web/dist
+WORKDIR /app
 USER gitwise
 EXPOSE 3000
 ENTRYPOINT ["gitwise"]

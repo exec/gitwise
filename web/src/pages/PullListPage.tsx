@@ -44,7 +44,7 @@ export default function PullListPage() {
 
   useEffect(() => {
     if (prsQuery.data) {
-      const newItems = prsQuery.data.data;
+      const newItems = prsQuery.data.data ?? [];
       if (cursor) {
         setItems((prev) => [...prev, ...newItems]);
       } else {
