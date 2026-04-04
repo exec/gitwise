@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import React from 'react';
+import { Fragment, useState } from "react";
+import React from "react";
 
-type ViewMode = 'unified' | 'split';
+type ViewMode = "unified" | "split";
 
 interface DiffFile {
   path: string;
@@ -12,28 +12,38 @@ interface DiffFile {
   patch?: string;
 }
 
+interface InlineComment {
+  path: string;
+  line: number;
+  side: string;
+  body: string;
+  author_name?: string;
+}
+
 interface DiffViewerProps {
   files: DiffFile[];
+  onAddInlineComment?: (path: string, line: number, side: string, body: string) => void;
+  inlineComments?: InlineComment[];
 }
 
 const CODE_EXTENSIONS = new Set([
-  '.js', '.ts', '.tsx', '.jsx', '.go', '.rs', '.py', '.java', '.c', '.h',
-  '.cpp', '.hpp', '.rb', '.swift', '.kt', '.scala', '.sh', '.bash', '.zsh',
-  '.css', '.scss', '.less', '.json', '.yaml', '.yml', '.toml', '.xml',
+  ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".py", ".java", ".c", ".h",
+  ".cpp", ".hpp", ".rb", ".swift", ".kt", ".scala", ".sh", ".bash", ".zsh",
+  ".css", ".scss", ".less", ".json", ".yaml", ".yml", ".toml", ".xml",
 ]);
 
 const KEYWORDS = new Set([
-  'function', 'const', 'let', 'var', 'if', 'else', 'for', 'while', 'return',
-  'import', 'export', 'class', 'struct', 'type', 'interface', 'func', 'def',
-  'pub', 'fn', 'async', 'await', 'switch', 'case', 'break', 'continue',
-  'new', 'this', 'self', 'true', 'false', 'null', 'nil', 'undefined',
-  'package', 'from', 'try', 'catch', 'throw', 'finally', 'default',
-  'extends', 'implements', 'static', 'void', 'int', 'string', 'bool',
+  "function", "const", "let", "var", "if", "else", "for", "while", "return",
+  "import", "export", "class", "struct", "type", "interface", "func", "def",
+  "pub", "fn", "async", "await", "switch", "case", "break", "continue",
+  "new", "this", "self", "true", "false", "null", "nil", "undefined",
+  "package", "from", "try", "catch", "throw", "finally", "default",
+  "extends", "implements", "static", "void", "int", "string", "bool",
 ]);
 
 function getExtension(filePath: string): string {
-  const dot = filePath.lastIndexOf('.');
-  if (dot === -1) return '';
+  const dot = filePath.lastIndexOf(".");
+  if (dot === -1) return "";
   return filePath.slice(dot).toLowerCase();
 }
 
@@ -49,7 +59,7 @@ function highlightLine(content: string, filePath: string): React.ReactNode {
 
   while (i < content.length) {
     // Comments: // to end of line
-    if (content[i] === '/' && content[i + 1] === '/') {
+    if (content[i] === "/" && content[i + 1] === "/") {
       tokens.push(
         <span key={key++} className="hl-comment">{content.slice(i)}</span>
       );
@@ -58,7 +68,7 @@ function highlightLine(content: string, filePath: string): React.ReactNode {
     }
 
     // Comments: # to end of line (Python, shell, YAML)
-    if (content[i] === '#' && (ext === '.py' || ext === '.sh' || ext === '.bash' || ext === '.zsh' || ext === '.yaml' || ext === '.yml' || ext === '.toml')) {
+    if (content[i] === "#" && (ext === ".py" || ext === ".sh" || ext === ".bash" || ext === ".zsh" || ext === ".yaml" || ext === ".yml" || ext === ".toml")) {
       tokens.push(
         <span key={key++} className="hl-comment">{content.slice(i)}</span>
       );
@@ -70,7 +80,7 @@ function highlightLine(content: string, filePath: string): React.ReactNode {
     if (content[i] === '"') {
       let j = i + 1;
       while (j < content.length && content[j] !== '"') {
-        if (content[j] === '\\') j++; // skip escaped char
+        if (content[j] === "\\") j++; // skip escaped char
         j++;
       }
       j = Math.min(j + 1, content.length);
@@ -85,7 +95,7 @@ function highlightLine(content: string, filePath: string): React.ReactNode {
     if (content[i] === "'") {
       let j = i + 1;
       while (j < content.length && content[j] !== "'") {
-        if (content[j] === '\\') j++;
+        if (content[j] === "\\") j++;
         j++;
       }
       j = Math.min(j + 1, content.length);
@@ -97,10 +107,10 @@ function highlightLine(content: string, filePath: string): React.ReactNode {
     }
 
     // Backtick strings (template literals)
-    if (content[i] === '`') {
+    if (content[i] === "`") {
       let j = i + 1;
-      while (j < content.length && content[j] !== '`') {
-        if (content[j] === '\\') j++;
+      while (j < content.length && content[j] !== "`") {
+        if (content[j] === "\\") j++;
         j++;
       }
       j = Math.min(j + 1, content.length);
@@ -165,13 +175,13 @@ function parsePatchSideBySide(lines: PatchLine[]): SideBySidePair[] {
   while (i < lines.length) {
     const line = lines[i];
 
-    if (line.type === 'hunk') {
+    if (line.type === "hunk") {
       pairs.push({ left: line, right: line, isHunk: true });
       i++;
       continue;
     }
 
-    if (line.type === 'context') {
+    if (line.type === "context") {
       pairs.push({ left: line, right: line, isHunk: false });
       i++;
       continue;
@@ -179,14 +189,14 @@ function parsePatchSideBySide(lines: PatchLine[]): SideBySidePair[] {
 
     // Collect consecutive del lines
     const dels: PatchLine[] = [];
-    while (i < lines.length && lines[i].type === 'del') {
+    while (i < lines.length && lines[i].type === "del") {
       dels.push(lines[i]);
       i++;
     }
 
     // Collect consecutive add lines
     const adds: PatchLine[] = [];
-    while (i < lines.length && lines[i].type === 'add') {
+    while (i < lines.length && lines[i].type === "add") {
       adds.push(lines[i]);
       i++;
     }
@@ -205,21 +215,41 @@ function parsePatchSideBySide(lines: PatchLine[]): SideBySidePair[] {
   return pairs;
 }
 
-export default function DiffViewer({ files }: DiffViewerProps) {
-  const [viewMode, setViewMode] = useState<ViewMode>('unified');
+export default function DiffViewer({ files, onAddInlineComment, inlineComments }: DiffViewerProps) {
+  const [viewMode, setViewMode] = useState<ViewMode>("unified");
+  const [commentForm, setCommentForm] = useState<{path: string, line: number, side: string} | null>(null);
+  const [commentText, setCommentText] = useState("");
+
+  function handleSubmitComment() {
+    if (commentForm && onAddInlineComment && commentText.trim()) {
+      onAddInlineComment(commentForm.path, commentForm.line, commentForm.side, commentText);
+      setCommentForm(null);
+      setCommentText("");
+    }
+  }
+
+  function handleCancelComment() {
+    setCommentForm(null);
+    setCommentText("");
+  }
+
+  function getCommentsForLine(path: string, line: number, side: string): InlineComment[] {
+    if (!inlineComments) return [];
+    return inlineComments.filter(c => c.path === path && c.line === line && c.side === side);
+  }
 
   return (
     <div className="diff-viewer">
       <div className="diff-view-toggle">
         <button
-          className={`btn btn-sm ${viewMode === 'unified' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setViewMode('unified')}
+          className={`btn btn-sm ${viewMode === "unified" ? "btn-primary" : "btn-secondary"}`}
+          onClick={() => setViewMode("unified")}
         >
           Unified
         </button>
         <button
-          className={`btn btn-sm ${viewMode === 'split' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setViewMode('split')}
+          className={`btn btn-sm ${viewMode === "split" ? "btn-primary" : "btn-secondary"}`}
+          onClick={() => setViewMode("split")}
         >
           Split
         </button>
@@ -250,37 +280,102 @@ export default function DiffViewer({ files }: DiffViewerProps) {
               )}
             </span>
           </div>
-          {file.patch && viewMode === 'unified' && (
+          {file.patch && viewMode === "unified" && (
             <div className="diff-content">
               <table className="diff-table">
                 <tbody>
-                  {parsePatch(file.patch).map((line, lineIdx) => (
-                    <tr key={lineIdx} className={`diff-line diff-${line.type}`}>
-                      <td className="diff-line-num diff-line-num-old">
-                        {line.oldNum ?? ""}
-                      </td>
-                      <td className="diff-line-num diff-line-num-new">
-                        {line.newNum ?? ""}
-                      </td>
-                      <td className="diff-line-content">
-                        <span className="diff-line-prefix">
-                          {line.type === "add"
-                            ? "+"
-                            : line.type === "del"
-                              ? "-"
-                              : line.type === "hunk"
-                                ? ""
-                                : " "}
-                        </span>
-                        {highlightLine(line.content, file.path)}
-                      </td>
-                    </tr>
-                  ))}
+                  {parsePatch(file.patch).map((line, lineIdx) => {
+                    const lineNum = line.type === "del" ? line.oldNum : line.newNum;
+                    const side = line.type === "del" ? "left" : "right";
+                    const lineComments = lineNum != null
+                      ? getCommentsForLine(file.path, lineNum, side)
+                      : [];
+                    const isFormOpen = commentForm != null
+                      && commentForm.path === file.path
+                      && commentForm.line === lineNum
+                      && commentForm.side === side;
+
+                    return (
+                      <Fragment key={lineIdx}>
+                        <tr className={`diff-line diff-${line.type}`}>
+                          <td className="diff-line-num diff-line-num-old">
+                            {onAddInlineComment && line.type !== "hunk" && lineNum != null && (
+                              <button
+                                className="inline-comment-btn"
+                                onClick={() => setCommentForm({ path: file.path, line: lineNum, side })}
+                                title="Add comment"
+                              >
+                                +
+                              </button>
+                            )}
+                            {line.oldNum ?? ""}
+                          </td>
+                          <td className="diff-line-num diff-line-num-new">
+                            {line.newNum ?? ""}
+                          </td>
+                          <td className="diff-line-content">
+                            <span className="diff-line-prefix">
+                              {line.type === "add"
+                                ? "+"
+                                : line.type === "del"
+                                  ? "-"
+                                  : line.type === "hunk"
+                                    ? ""
+                                    : " "}
+                            </span>
+                            {highlightLine(line.content, file.path)}
+                          </td>
+                        </tr>
+                        {lineComments.length > 0 && (
+                          <tr className="inline-comment-row">
+                            <td colSpan={3}>
+                              {lineComments.map((c, ci) => (
+                                <div key={ci} className="inline-comment-display">
+                                  {c.author_name && <strong>{c.author_name}</strong>}
+                                  {c.body}
+                                </div>
+                              ))}
+                            </td>
+                          </tr>
+                        )}
+                        {isFormOpen && (
+                          <tr className="inline-comment-row">
+                            <td colSpan={3}>
+                              <div className="inline-comment-form">
+                                <textarea
+                                  autoFocus
+                                  rows={3}
+                                  placeholder="Write a comment..."
+                                  value={commentText}
+                                  onChange={(e) => setCommentText(e.target.value)}
+                                />
+                                <div className="inline-comment-actions">
+                                  <button
+                                    className="btn btn-primary btn-sm"
+                                    disabled={!commentText.trim()}
+                                    onClick={handleSubmitComment}
+                                  >
+                                    Add Comment
+                                  </button>
+                                  <button
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={handleCancelComment}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           )}
-          {file.patch && viewMode === 'split' && (
+          {file.patch && viewMode === "split" && (
             <div className="diff-content">
               <table className="diff-split-table">
                 <tbody>
@@ -295,8 +390,8 @@ export default function DiffViewer({ files }: DiffViewerProps) {
                         </tr>
                       );
                     }
-                    const leftClass = pair.left?.type === 'del' ? 'diff-del' : '';
-                    const rightClass = pair.right?.type === 'add' ? 'diff-add' : '';
+                    const leftClass = pair.left?.type === "del" ? "diff-del" : "";
+                    const rightClass = pair.right?.type === "add" ? "diff-add" : "";
                     return (
                       <tr key={pairIdx} className="diff-line">
                         <td className={`diff-split-num diff-line-num ${leftClass}`}>

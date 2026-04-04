@@ -1094,6 +1094,76 @@ input:disabled {
 .hl-comment { color: #8b949e; font-style: italic; }
 .hl-number { color: #79c0ff; }
 
+/* Inline comments on diff */
+.diff-line:hover .inline-comment-btn {
+  opacity: 1;
+}
+
+.inline-comment-btn {
+  opacity: 0;
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  font-size: 0.75rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s;
+}
+
+.diff-line-num-old {
+  position: relative;
+}
+
+.inline-comment-row td {
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.inline-comment-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.inline-comment-form textarea {
+  width: 100%;
+  padding: 8px;
+  font-size: 0.8125rem;
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  resize: vertical;
+}
+
+.inline-comment-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.inline-comment-display {
+  padding: 8px 12px;
+  font-size: 0.8125rem;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius);
+  margin-bottom: 4px;
+}
+
+.inline-comment-display strong {
+  margin-right: 8px;
+}
+
 .tab-count {
   font-size: 0.75rem;
   background: var(--bg-tertiary);
