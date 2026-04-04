@@ -819,6 +819,16 @@ func (s *Service) doRebaseMerge(r *gogit.Repository, owner, name, base string, b
 	return r.Storer.SetReference(ref)
 }
 
+// DeleteBranch removes a branch reference from a bare repository.
+func (s *Service) DeleteBranch(owner, name, branch string) error {
+	r, err := s.openRepo(owner, name)
+	if err != nil {
+		return err
+	}
+	ref := plumbing.NewBranchReferenceName(branch)
+	return r.Storer.RemoveReference(ref)
+}
+
 // ListBranches returns all branches.
 func (s *Service) ListBranches(owner, name string) ([]models.Branch, error) {
 	r, err := s.openRepo(owner, name)

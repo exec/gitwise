@@ -92,6 +92,7 @@ export default function PullDetailPage() {
   const [reviewType, setReviewType] = useState("comment");
   const [reviewBody, setReviewBody] = useState("");
   const [pendingInlineComments, setPendingInlineComments] = useState<Array<{path: string, line: number, side: string, body: string}>>([]);
+  const [deleteBranch, setDeleteBranch] = useState(false);
 
   const prQuery = useQuery({
     queryKey: ["pull", owner, repo, number],
@@ -166,7 +167,10 @@ export default function PullDetailPage() {
 
   const mergePR = useMutation({
     mutationFn: (strategy: string) =>
-      put(`/repos/${owner}/${repo}/pulls/${number}/merge`, { strategy }),
+      put(`/repos/${owner}/${repo}/pulls/${number}/merge`, {
+        strategy,
+        delete_branch: deleteBranch,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["pull", owner, repo, number],
@@ -441,6 +445,14 @@ export default function PullDetailPage() {
                       Close PR
                     </button>
                     <div className="merge-controls">
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={deleteBranch}
+                          onChange={(e) => setDeleteBranch(e.target.checked)}
+                        />
+                        Delete source branch
+                      </label>
                       <button
                         className="btn btn-success"
                         onClick={() => mergePR.mutate("merge")}
