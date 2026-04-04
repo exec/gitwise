@@ -34,6 +34,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/review"
 	"github.com/gitwise-io/gitwise/internal/services/search"
 	"github.com/gitwise-io/gitwise/internal/services/user"
+	"github.com/gitwise-io/gitwise/internal/services/webhook"
 	gitwisews "github.com/gitwise-io/gitwise/internal/websocket"
 )
 
@@ -59,6 +60,7 @@ type Server struct {
 	activitySvc   *activity.Service
 	searchSvc     *search.Service
 	orgSvc        *org.Service
+	webhookSvc    *webhook.Service
 
 	// WebSocket
 	wsHub *gitwisews.Hub
@@ -81,6 +83,7 @@ type Server struct {
 	activityHandler   *handlers.ActivityHandler
 	searchHandler     *handlers.SearchHandler
 	orgHandler        *handlers.OrgHandler
+	webhookHandler *handlers.WebhookHandler
 
 	// Git protocol
 	gitHTTP *git.HTTPHandler
@@ -145,6 +148,14 @@ func (s *Server) initServices() {
 	// Search service
 	s.searchSvc = search.NewService(s.db, s.gitSvc)
 	s.searchHandler = handlers.NewSearchHandler(s.searchSvc, s.repoSvc)
+
+	// Org service
+	s.orgSvc = org.NewService(s.db)
+	s.orgHandler = handlers.NewOrgHandler(s.orgSvc)
+
+	// Webhook service
+	s.webhookSvc = webhook.NewService(s.db)
+	s.webhookHandler = handlers.NewWebhookHandler(s.repoSvc, s.webhookSvc)
 
 	// Git HTTP protocol
 	s.gitHTTP = git.NewHTTPHandler(s.gitSvc, func(username, password string) (string, bool) {
@@ -262,6 +273,18 @@ func (s *Server) setupRoutes() {
 				r.With(middleware.RequireAuth).Post("/branch-protection", s.protectionHandler.Create)
 				r.With(middleware.RequireAuth).Patch("/branch-protection/{ruleID}", s.protectionHandler.Update)
 				r.With(middleware.RequireAuth).Delete("/branch-protection/{ruleID}", s.protectionHandler.Delete)
+
+					// Webhooks
+					r.Route("/webhooks", func(r chi.Router) {
+						r.Use(middleware.RequireAuth)
+						r.Get("/", s.webhookHandler.List)
+						r.Post("/", s.webhookHandler.Create)
+						r.Get("/{webhookID}", s.webhookHandler.Get)
+						r.Patch("/{webhookID}", s.webhookHandler.Update)
+						r.Delete("/{webhookID}", s.webhookHandler.Delete)
+						r.Get("/{webhookID}/deliveries", s.webhookHandler.ListDeliveries)
+						r.Post("/{webhookID}/test", s.webhookHandler.Test)
+					})
 			})
 		})
 
@@ -284,8 +307,16 @@ func (s *Server) setupRoutes() {
 		r.With(middleware.RequireAuth).Patch("/user/profile", s.profileHandler.UpdateProfile)
 		r.With(middleware.RequireAuth).Put("/user/pinned-repos", s.profileHandler.SetPinnedRepos)
 
-		// Search (stub)
-		r.Post("/search", handleNotImplemented)
+		// Organizations
+		r.Route("/orgs/{name}", func(r chi.Router) {
+			r.Get("/", s.orgHandler.Get)
+			r.Get("/members", s.orgHandler.ListMembers)
+			r.Get("/repos", s.orgHandler.ListRepos)
+		})
+
+		// Search
+		r.Post("/search", s.searchHandler.Search)
+		r.With(middleware.RequireAuth).Post("/search/code/index", s.searchHandler.IndexRepo)
 	})
 
 	// WebSocket endpoint (authenticated via session cookie or bearer token)
