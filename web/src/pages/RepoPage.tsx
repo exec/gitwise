@@ -68,13 +68,14 @@ export default function RepoPage() {
     enabled: !!owner && !!repo,
   });
 
+  const repoLoaded = !!repoQuery.data;
   const currentRef = refParam ?? repoQuery.data?.default_branch ?? "main";
 
   const branchesQuery = useQuery({
     queryKey: ["branches", owner, repo],
     queryFn: () =>
       get<Branch[]>(`/repos/${owner}/${repo}/branches`).then((r) => r.data),
-    enabled: !!owner && !!repo,
+    enabled: !!owner && !!repo && repoLoaded,
   });
 
   const treePath = splat ?? "";
@@ -87,7 +88,7 @@ export default function RepoPage() {
         `/repos/${owner}/${repo}/tree/${currentRef}${path}`,
       ).then((r) => r.data);
     },
-    enabled: !!owner && !!repo && tab === "code" && view !== "blob",
+    enabled: !!owner && !!repo && repoLoaded && tab === "code" && view !== "blob",
   });
 
   const blobQuery = useQuery({
@@ -96,7 +97,7 @@ export default function RepoPage() {
       get<Blob>(
         `/repos/${owner}/${repo}/blob/${currentRef}/${treePath}`,
       ).then((r) => r.data),
-    enabled: !!owner && !!repo && view === "blob" && !!treePath,
+    enabled: !!owner && !!repo && repoLoaded && view === "blob" && !!treePath,
   });
 
   const commitsQuery = useQuery({
@@ -105,7 +106,7 @@ export default function RepoPage() {
       get<Commit[]>(`/repos/${owner}/${repo}/commits?ref=${currentRef}`).then(
         (r) => r.data,
       ),
-    enabled: !!owner && !!repo && tab === "commits",
+    enabled: !!owner && !!repo && repoLoaded && tab === "commits",
   });
 
   if (repoQuery.isLoading) {
@@ -187,18 +188,26 @@ export default function RepoPage() {
             </select>
           </div>
 
-          {view === "blob" && blobQuery.data ? (
-            <div className="file-view">
-              <div className="file-header">
-                <span className="file-path">{treePath}</span>
-                <span className="file-size">
-                  {formatSize(blobQuery.data.size)}
-                </span>
+          {view === "blob" ? (
+            blobQuery.isLoading ? (
+              <p className="muted">Loading file...</p>
+            ) : blobQuery.error ? (
+              <div className="error-banner">
+                {blobQuery.error instanceof Error ? blobQuery.error.message : "Failed to load file"}
               </div>
-              <pre className="file-content">
-                <code>{blobQuery.data.content}</code>
-              </pre>
-            </div>
+            ) : blobQuery.data ? (
+              <div className="file-view">
+                <div className="file-header">
+                  <span className="file-path">{treePath}</span>
+                  <span className="file-size">
+                    {formatSize(blobQuery.data.size)}
+                  </span>
+                </div>
+                <pre className="file-content">
+                  <code>{blobQuery.data.content}</code>
+                </pre>
+              </div>
+            ) : null
           ) : (
             <>
               {treeQuery.isLoading && (
