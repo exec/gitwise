@@ -38,6 +38,6 @@ type UpdateIssueRequest struct {
 	Title    *string  `json:"title,omitempty"`
 	Body     *string  `json:"body,omitempty"`
 	Status   *string  `json:"status,omitempty"`
-	Labels   []string `json:"labels,omitempty"`
+	Labels   *[]string `json:"labels"`
 	Priority *string  `json:"priority,omitempty"`
 }

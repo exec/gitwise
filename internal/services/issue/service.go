@@ -204,8 +204,9 @@ func (s *Service) Update(ctx context.Context, repoID uuid.UUID, number int, req 
 		}
 	}
 	if req.Labels != nil {
+		labels := *req.Labels
 		setClauses = append(setClauses, fmt.Sprintf("labels = $%d", argIdx))
-		args = append(args, req.Labels)
+		args = append(args, labels)
 		argIdx++
 	}
 	if req.Priority != nil {
