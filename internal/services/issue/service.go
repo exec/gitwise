@@ -2,6 +2,7 @@ package issue
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -117,7 +118,7 @@ func (s *Service) GetByNumber(ctx context.Context, repoID uuid.UUID, number int)
 	return issue, nil
 }
 
-func (s *Service) List(ctx context.Context, repoID uuid.UUID, status string, limit int) ([]models.Issue, error) {
+func (s *Service) List(ctx context.Context, repoID uuid.UUID, status string, cursor string, limit int) ([]models.Issue, string, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
@@ -139,13 +140,23 @@ func (s *Service) List(ctx context.Context, repoID uuid.UUID, status string, lim
 		argIdx++
 	}
 
+	if cursor != "" {
+		cursorTime, err := decodeCursor(cursor)
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid cursor: %w", err)
+		}
+		query += fmt.Sprintf(` AND i.created_at < $%d`, argIdx)
+		args = append(args, cursorTime)
+		argIdx++
+	}
+
 	query += ` ORDER BY i.created_at DESC`
 	query += fmt.Sprintf(` LIMIT $%d`, argIdx)
-	args = append(args, limit)
+	args = append(args, limit+1)
 
 	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("query issues: %w", err)
+		return nil, "", fmt.Errorf("query issues: %w", err)
 	}
 	defer rows.Close()
 
@@ -158,14 +169,21 @@ func (s *Service) List(ctx context.Context, repoID uuid.UUID, status string, lim
 			&i.MilestoneID, &i.LinkedPRs, &i.Priority, &i.Metadata,
 			&i.ClosedAt, &i.CreatedAt, &i.UpdatedAt,
 		); err != nil {
-			return nil, fmt.Errorf("scan issue: %w", err)
+			return nil, "", fmt.Errorf("scan issue: %w", err)
 		}
 		issues = append(issues, i)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate issues: %w", err)
+		return nil, "", fmt.Errorf("iterate issues: %w", err)
 	}
-	return issues, nil
+
+	var nextCursor string
+	if len(issues) > limit {
+		issues = issues[:limit]
+		nextCursor = encodeCursor(issues[limit-1].CreatedAt)
+	}
+
+	return issues, nextCursor, nil
 }
 
 func (s *Service) Update(ctx context.Context, repoID uuid.UUID, number int, req models.UpdateIssueRequest) (*models.Issue, error) {
@@ -258,4 +276,16 @@ func isValidPriority(p string) bool {
 		return true
 	}
 	return false
+}
+
+func encodeCursor(t time.Time) string {
+	return base64.StdEncoding.EncodeToString([]byte(t.Format(time.RFC3339Nano)))
+}
+
+func decodeCursor(cursor string) (time.Time, error) {
+	b, err := base64.StdEncoding.DecodeString(cursor)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Parse(time.RFC3339Nano, string(b))
 }

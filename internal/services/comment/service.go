@@ -2,6 +2,7 @@ package comment
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -63,15 +64,15 @@ func (s *Service) Create(ctx context.Context, repoID uuid.UUID, issueID, prID *u
 	return comment, nil
 }
 
-func (s *Service) ListByIssue(ctx context.Context, issueID uuid.UUID, limit int) ([]models.Comment, error) {
-	return s.list(ctx, "issue_id", issueID, limit)
+func (s *Service) ListByIssue(ctx context.Context, issueID uuid.UUID, cursor string, limit int) ([]models.Comment, string, error) {
+	return s.list(ctx, "issue_id", issueID, cursor, limit)
 }
 
-func (s *Service) ListByPR(ctx context.Context, prID uuid.UUID, limit int) ([]models.Comment, error) {
-	return s.list(ctx, "pr_id", prID, limit)
+func (s *Service) ListByPR(ctx context.Context, prID uuid.UUID, cursor string, limit int) ([]models.Comment, string, error) {
+	return s.list(ctx, "pr_id", prID, cursor, limit)
 }
 
-func (s *Service) list(ctx context.Context, col string, id uuid.UUID, limit int) ([]models.Comment, error) {
+func (s *Service) list(ctx context.Context, col string, id uuid.UUID, cursor string, limit int) ([]models.Comment, string, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
@@ -81,13 +82,28 @@ func (s *Service) list(ctx context.Context, col string, id uuid.UUID, limit int)
 		       c.body, c.created_at, c.updated_at
 		FROM comments c
 		JOIN users u ON u.id = c.author_id
-		WHERE c.%s = $1
-		ORDER BY c.created_at ASC
-		LIMIT $2`, col)
+		WHERE c.%s = $1`, col)
 
-	rows, err := s.db.Query(ctx, query, id, limit)
+	args := []any{id}
+	argIdx := 2
+
+	if cursor != "" {
+		cursorTime, err := decodeCursor(cursor)
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid cursor: %w", err)
+		}
+		query += fmt.Sprintf(` AND c.created_at > $%d`, argIdx)
+		args = append(args, cursorTime)
+		argIdx++
+	}
+
+	query += ` ORDER BY c.created_at ASC`
+	query += fmt.Sprintf(` LIMIT $%d`, argIdx)
+	args = append(args, limit+1)
+
+	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("query comments: %w", err)
+		return nil, "", fmt.Errorf("query comments: %w", err)
 	}
 	defer rows.Close()
 
@@ -98,14 +114,21 @@ func (s *Service) list(ctx context.Context, col string, id uuid.UUID, limit int)
 			&c.ID, &c.RepoID, &c.IssueID, &c.PRID, &c.AuthorID, &c.AuthorName,
 			&c.Body, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
-			return nil, fmt.Errorf("scan comment: %w", err)
+			return nil, "", fmt.Errorf("scan comment: %w", err)
 		}
 		comments = append(comments, c)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate comments: %w", err)
+		return nil, "", fmt.Errorf("iterate comments: %w", err)
 	}
-	return comments, nil
+
+	var nextCursor string
+	if len(comments) > limit {
+		comments = comments[:limit]
+		nextCursor = encodeCursor(comments[limit-1].CreatedAt)
+	}
+
+	return comments, nextCursor, nil
 }
 
 func (s *Service) Update(ctx context.Context, commentID, authorID uuid.UUID, req models.UpdateCommentRequest) (*models.Comment, error) {
@@ -135,6 +158,18 @@ func (s *Service) Update(ctx context.Context, commentID, authorID uuid.UUID, req
 	}
 
 	return comment, nil
+}
+
+func encodeCursor(t time.Time) string {
+	return base64.StdEncoding.EncodeToString([]byte(t.Format(time.RFC3339Nano)))
+}
+
+func decodeCursor(cursor string) (time.Time, error) {
+	b, err := base64.StdEncoding.DecodeString(cursor)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Parse(time.RFC3339Nano, string(b))
 }
 
 func (s *Service) Delete(ctx context.Context, commentID, authorID uuid.UUID) error {

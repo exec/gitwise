@@ -2,6 +2,7 @@ package pull
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -175,7 +176,7 @@ func (s *Service) GetByNumber(ctx context.Context, repoID uuid.UUID, number int)
 	return pr, nil
 }
 
-func (s *Service) List(ctx context.Context, repoID uuid.UUID, status string, limit int) ([]models.PullRequest, error) {
+func (s *Service) List(ctx context.Context, repoID uuid.UUID, status string, cursor string, limit int) ([]models.PullRequest, string, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
@@ -199,13 +200,23 @@ func (s *Service) List(ctx context.Context, repoID uuid.UUID, status string, lim
 		argIdx++
 	}
 
+	if cursor != "" {
+		cursorTime, err := decodeCursor(cursor)
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid cursor: %w", err)
+		}
+		query += fmt.Sprintf(` AND p.created_at < $%d`, argIdx)
+		args = append(args, cursorTime)
+		argIdx++
+	}
+
 	query += ` ORDER BY p.created_at DESC`
 	query += fmt.Sprintf(` LIMIT $%d`, argIdx)
-	args = append(args, limit)
+	args = append(args, limit+1)
 
 	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("query PRs: %w", err)
+		return nil, "", fmt.Errorf("query PRs: %w", err)
 	}
 	defer rows.Close()
 
@@ -219,7 +230,7 @@ func (s *Service) List(ctx context.Context, repoID uuid.UUID, status string, lim
 			&p.Intent, &p.DiffStats, &p.ReviewSummary, &p.MergeStrategy,
 			&p.MergedByID, &mergedByName, &p.MergedAt, &p.ClosedAt, &p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
-			return nil, fmt.Errorf("scan PR: %w", err)
+			return nil, "", fmt.Errorf("scan PR: %w", err)
 		}
 		if mergedByName != nil {
 			p.MergedByName = *mergedByName
@@ -227,9 +238,16 @@ func (s *Service) List(ctx context.Context, repoID uuid.UUID, status string, lim
 		prs = append(prs, p)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate PRs: %w", err)
+		return nil, "", fmt.Errorf("iterate PRs: %w", err)
 	}
-	return prs, nil
+
+	var nextCursor string
+	if len(prs) > limit {
+		prs = prs[:limit]
+		nextCursor = encodeCursor(prs[limit-1].CreatedAt)
+	}
+
+	return prs, nextCursor, nil
 }
 
 func (s *Service) Update(ctx context.Context, repoID uuid.UUID, number int, req models.UpdatePullRequestRequest) (*models.PullRequest, error) {
@@ -415,4 +433,16 @@ func marshalIntent(intent *models.PRIntent) (json.RawMessage, error) {
 		return nil, fmt.Errorf("marshal intent: %w", err)
 	}
 	return data, nil
+}
+
+func encodeCursor(t time.Time) string {
+	return base64.StdEncoding.EncodeToString([]byte(t.Format(time.RFC3339Nano)))
+}
+
+func decodeCursor(cursor string) (time.Time, error) {
+	b, err := base64.StdEncoding.DecodeString(cursor)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Parse(time.RFC3339Nano, string(b))
 }
