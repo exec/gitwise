@@ -15,6 +15,7 @@ import (
 
 	"github.com/gitwise-io/gitwise/internal/git"
 	"github.com/gitwise-io/gitwise/internal/models"
+	"github.com/gitwise-io/gitwise/internal/services/protection"
 )
 
 var (
@@ -26,16 +27,19 @@ var (
 	ErrAlreadyMerged   = errors.New("pull request is already merged")
 	ErrNotOpen         = errors.New("pull request is not open")
 	ErrMergeFailed     = errors.New("merge failed")
-	ErrForbidden       = errors.New("access denied")
+	ErrForbidden            = errors.New("access denied")
+	ErrInsufficientReviews = errors.New("insufficient approving reviews")
+	ErrLinearRequired      = errors.New("linear history required: use rebase or squash strategy")
 )
 
 type Service struct {
-	db  *pgxpool.Pool
-	git *git.Service
+	db   *pgxpool.Pool
+	git  *git.Service
+	prot *protection.Service
 }
 
-func NewService(db *pgxpool.Pool, gitSvc *git.Service) *Service {
-	return &Service{db: db, git: gitSvc}
+func NewService(db *pgxpool.Pool, gitSvc *git.Service, protSvc *protection.Service) *Service {
+	return &Service{db: db, git: gitSvc, prot: protSvc}
 }
 
 func (s *Service) Create(ctx context.Context, repoID, authorID uuid.UUID, ownerName, repoName string, req models.CreatePullRequestRequest) (*models.PullRequest, error) {
@@ -295,6 +299,30 @@ func (s *Service) Merge(ctx context.Context, repoID uuid.UUID, number int, merge
 		// valid
 	default:
 		return nil, fmt.Errorf("%w: strategy must be merge, squash, or rebase", ErrInvalidStatus)
+	}
+
+	// Check branch protection rules
+	rule, err := s.prot.Check(ctx, repoID, pr.TargetBranch)
+	if err != nil {
+		return nil, fmt.Errorf("check branch protection: %w", err)
+	}
+	if rule != nil {
+		if rule.RequiredReviews > 0 {
+			var approvalCount int
+			err := s.db.QueryRow(ctx,
+				`SELECT COUNT(DISTINCT author_id) FROM reviews WHERE pr_id = $1 AND type = 'approval'`,
+				pr.ID,
+			).Scan(&approvalCount)
+			if err != nil {
+				return nil, fmt.Errorf("count approvals: %w", err)
+			}
+			if approvalCount < rule.RequiredReviews {
+				return nil, fmt.Errorf("%w: need %d, have %d", ErrInsufficientReviews, rule.RequiredReviews, approvalCount)
+			}
+		}
+		if rule.RequireLinear && strategy == "merge" {
+			return nil, ErrLinearRequired
+		}
 	}
 
 	// Get merger info — hard error if lookup fails (merger must exist)

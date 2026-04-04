@@ -222,6 +222,14 @@ func (h *PullHandler) Merge(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "not_open", "pull request is not open")
 		return
 	}
+	if errors.Is(err, pull.ErrInsufficientReviews) {
+		writeError(w, http.StatusUnprocessableEntity, "insufficient_reviews", err.Error())
+		return
+	}
+	if errors.Is(err, pull.ErrLinearRequired) {
+		writeError(w, http.StatusUnprocessableEntity, "linear_required", err.Error())
+		return
+	}
 	if errors.Is(err, pull.ErrMergeFailed) {
 		writeError(w, http.StatusConflict, "merge_failed", err.Error())
 		return
