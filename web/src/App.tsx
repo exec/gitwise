@@ -12,6 +12,9 @@ import NewIssuePage from "./pages/NewIssuePage";
 import PullListPage from "./pages/PullListPage";
 import PullDetailPage from "./pages/PullDetailPage";
 import NewPullPage from "./pages/NewPullPage";
+import SearchPage from "./pages/SearchPage";
+import ProfilePage from "./pages/ProfilePage";
+import EditProfilePage from "./pages/EditProfilePage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -40,6 +43,20 @@ export default function App() {
           element={
             <RequireAuth>
               <NewRepoPage />
+            </RequireAuth>
+          }
+        />
+
+        {/* Search */}
+        <Route path="/search" element={<SearchPage />} />
+
+        {/* Profile */}
+        <Route path="/users/:username" element={<ProfilePage />} />
+        <Route
+          path="/settings/profile"
+          element={
+            <RequireAuth>
+              <EditProfilePage />
             </RequireAuth>
           }
         />
