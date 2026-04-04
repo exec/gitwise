@@ -384,7 +384,7 @@ export default function DiffViewer({ files, onAddInlineComment, inlineComments }
                       return (
                         <tr key={pairIdx} className="diff-line diff-hunk">
                           <td className="diff-split-num diff-line-num">{""}</td>
-                          <td className="diff-split-content diff-line-content" colSpan={3}>
+                          <td className="diff-split-content diff-line-content" colSpan={4}>
                             {pair.left?.content}
                           </td>
                         </tr>
@@ -392,22 +392,93 @@ export default function DiffViewer({ files, onAddInlineComment, inlineComments }
                     }
                     const leftClass = pair.left?.type === "del" ? "diff-del" : "";
                     const rightClass = pair.right?.type === "add" ? "diff-add" : "";
+
+                    // Determine line number and side for inline comments
+                    const splitLineNum = pair.left?.type === "del"
+                      ? pair.left.oldNum
+                      : pair.right?.type === "add"
+                        ? pair.right.newNum
+                        : (pair.right?.newNum ?? pair.left?.newNum);
+                    const splitSide = pair.left?.type === "del"
+                      ? "left"
+                      : "right";
+                    const splitComments = splitLineNum != null
+                      ? getCommentsForLine(file.path, splitLineNum, splitSide)
+                      : [];
+                    const splitFormOpen = commentForm != null
+                      && commentForm.path === file.path
+                      && commentForm.line === splitLineNum
+                      && commentForm.side === splitSide;
+
                     return (
-                      <tr key={pairIdx} className="diff-line">
-                        <td className={`diff-split-num diff-line-num ${leftClass}`}>
-                          {pair.left?.oldNum ?? pair.left?.newNum ?? ""}
-                        </td>
-                        <td className={`diff-split-content ${leftClass}`}>
-                          {pair.left ? highlightLine(pair.left.content, file.path) : ""}
-                        </td>
-                        <td className="diff-split-divider"></td>
-                        <td className={`diff-split-num diff-line-num ${rightClass}`}>
-                          {pair.right?.newNum ?? pair.right?.oldNum ?? ""}
-                        </td>
-                        <td className={`diff-split-content ${rightClass}`}>
-                          {pair.right ? highlightLine(pair.right.content, file.path) : ""}
-                        </td>
-                      </tr>
+                      <Fragment key={pairIdx}>
+                        <tr className="diff-line">
+                          <td className={`diff-split-num diff-line-num ${leftClass}`}>
+                            {onAddInlineComment && splitLineNum != null && (
+                              <button
+                                className="inline-comment-btn"
+                                onClick={() => setCommentForm({ path: file.path, line: splitLineNum, side: splitSide })}
+                                title="Add comment"
+                              >
+                                +
+                              </button>
+                            )}
+                            {pair.left?.oldNum ?? pair.left?.newNum ?? ""}
+                          </td>
+                          <td className={`diff-split-content ${leftClass}`}>
+                            {pair.left ? highlightLine(pair.left.content, file.path) : ""}
+                          </td>
+                          <td className="diff-split-divider"></td>
+                          <td className={`diff-split-num diff-line-num ${rightClass}`}>
+                            {pair.right?.newNum ?? pair.right?.oldNum ?? ""}
+                          </td>
+                          <td className={`diff-split-content ${rightClass}`}>
+                            {pair.right ? highlightLine(pair.right.content, file.path) : ""}
+                          </td>
+                        </tr>
+                        {splitComments.length > 0 && (
+                          <tr className="inline-comment-row">
+                            <td colSpan={5}>
+                              {splitComments.map((c, ci) => (
+                                <div key={ci} className="inline-comment-display">
+                                  {c.author_name && <strong>{c.author_name}</strong>}
+                                  {c.body}
+                                </div>
+                              ))}
+                            </td>
+                          </tr>
+                        )}
+                        {splitFormOpen && (
+                          <tr className="inline-comment-row">
+                            <td colSpan={5}>
+                              <div className="inline-comment-form">
+                                <textarea
+                                  autoFocus
+                                  rows={3}
+                                  placeholder="Write a comment..."
+                                  value={commentText}
+                                  onChange={(e) => setCommentText(e.target.value)}
+                                />
+                                <div className="inline-comment-actions">
+                                  <button
+                                    className="btn btn-primary btn-sm"
+                                    disabled={!commentText.trim()}
+                                    onClick={handleSubmitComment}
+                                  >
+                                    Add Comment
+                                  </button>
+                                  <button
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={handleCancelComment}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
