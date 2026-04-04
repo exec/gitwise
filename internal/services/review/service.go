@@ -16,9 +16,10 @@ import (
 )
 
 var (
-	ErrNotFound    = errors.New("review not found")
-	ErrInvalidType = errors.New("invalid review type")
-	ErrSelfReview  = errors.New("cannot review your own pull request")
+	ErrNotFound      = errors.New("review not found")
+	ErrInvalidType   = errors.New("invalid review type")
+	ErrSelfReview    = errors.New("cannot review your own pull request")
+	ErrThreadNotFound = errors.New("thread not found")
 )
 
 type Service struct {
@@ -112,6 +113,33 @@ func (s *Service) ListByPR(ctx context.Context, prID uuid.UUID) ([]models.Review
 	return reviews, nil
 }
 
+func (s *Service) ResolveThread(ctx context.Context, prID uuid.UUID, threadID string, resolved bool) error {
+	result, err := s.db.Exec(ctx, `
+		UPDATE reviews SET comments = (
+			SELECT COALESCE(jsonb_agg(
+				CASE WHEN elem->>'thread_id' = $2
+				     THEN jsonb_set(elem, '{resolved}', to_jsonb($3::boolean))
+				     ELSE elem
+				END
+			), '[]'::jsonb)
+			FROM jsonb_array_elements(comments) elem
+		)
+		WHERE pr_id = $1
+		AND EXISTS (
+			SELECT 1 FROM jsonb_array_elements(comments) e WHERE e->>'thread_id' = $2
+		)`, prID, threadID, resolved,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve thread: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrThreadNotFound
+	}
+
+	s.updateReviewSummary(ctx, prID)
+	return nil
+}
+
 func (s *Service) updateReviewSummary(ctx context.Context, prID uuid.UUID) {
 	rows, err := s.db.Query(ctx, `
 		SELECT DISTINCT ON (r.author_id) u.username, r.type
@@ -155,16 +183,59 @@ func (s *Service) updateReviewSummary(ctx context.Context, prID uuid.UUID) {
 		slog.Error("update review summary: comments count failed", "pr_id", prID, "error", err)
 	}
 
+	// Count thread resolution status across all reviews for this PR
+	threadsResolved, threadsUnresolved := s.countThreads(ctx, prID)
+
 	summary, _ := json.Marshal(map[string]any{
 		"approved_by":          approvedBy,
 		"changes_requested_by": changesRequestedBy,
 		"reviews_count":        reviewsCount,
 		"comments_count":       commentsCount,
+		"threads_resolved":     threadsResolved,
+		"threads_unresolved":   threadsUnresolved,
 	})
 
 	if _, err := s.db.Exec(ctx, `UPDATE pull_requests SET review_summary = $2, updated_at = now() WHERE id = $1`, prID, summary); err != nil {
 		slog.Error("update review summary: update failed", "pr_id", prID, "error", err)
 	}
+}
+
+func (s *Service) countThreads(ctx context.Context, prID uuid.UUID) (resolved int, unresolved int) {
+	reviews, err := s.ListByPR(ctx, prID)
+	if err != nil {
+		slog.Error("count threads: list reviews failed", "pr_id", prID, "error", err)
+		return 0, 0
+	}
+
+	// Collect all comments across all reviews and track thread resolution
+	// A thread is resolved if any comment in it has resolved=true
+	threadResolved := make(map[string]bool)
+	for _, r := range reviews {
+		var comments []models.InlineCommentInput
+		if err := json.Unmarshal(r.Comments, &comments); err != nil {
+			continue
+		}
+		for _, c := range comments {
+			if c.ThreadID == "" {
+				continue
+			}
+			if _, exists := threadResolved[c.ThreadID]; !exists {
+				threadResolved[c.ThreadID] = false
+			}
+			if c.Resolved {
+				threadResolved[c.ThreadID] = true
+			}
+		}
+	}
+
+	for _, isResolved := range threadResolved {
+		if isResolved {
+			resolved++
+		} else {
+			unresolved++
+		}
+	}
+	return resolved, unresolved
 }
 
 func isValidReviewType(t string) bool {

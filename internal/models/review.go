@@ -25,8 +25,14 @@ type CreateReviewRequest struct {
 }
 
 type InlineCommentInput struct {
-	Path string `json:"path"`
-	Line int    `json:"line"`
-	Side string `json:"side"` // left, right
-	Body string `json:"body"`
+	Path     string `json:"path"`
+	Line     int    `json:"line"`
+	Side     string `json:"side"`      // left, right
+	Body     string `json:"body"`
+	ThreadID string `json:"thread_id"` // groups comments into threads
+	Resolved bool   `json:"resolved"`  // whether this comment resolves the thread
+}
+
+type ResolveThreadRequest struct {
+	Resolved bool `json:"resolved"`
 }

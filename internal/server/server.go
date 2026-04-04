@@ -208,6 +208,7 @@ func (s *Server) setupRoutes() {
 					r.Get("/diff", s.pullHandler.GetDiff)
 					r.Get("/reviews", s.pullHandler.ListReviews)
 					r.With(middleware.RequireAuth).Post("/reviews", s.pullHandler.CreateReview)
+					r.With(middleware.RequireAuth).Put("/threads/{threadID}/resolve", s.pullHandler.ResolveThread)
 					r.Get("/comments", s.pullHandler.ListComments)
 					r.With(middleware.RequireAuth).Post("/comments", s.pullHandler.CreateComment)
 				})

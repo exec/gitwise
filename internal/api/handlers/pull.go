@@ -367,6 +367,62 @@ func (h *PullHandler) ListReviews(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, reviews)
 }
 
+func (h *PullHandler) ResolveThread(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	if userID == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "not authenticated")
+		return
+	}
+
+	owner := chi.URLParam(r, "owner")
+	repoName := chi.URLParam(r, "repo")
+
+	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName, userID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "repository not found")
+		return
+	}
+
+	number, err := strconv.Atoi(chi.URLParam(r, "number"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_number", "PR number must be an integer")
+		return
+	}
+
+	pr, err := h.pulls.GetByNumber(r.Context(), repository.ID, number)
+	if errors.Is(err, pull.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "pull request not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "failed to get pull request")
+		return
+	}
+
+	threadID := chi.URLParam(r, "threadID")
+	if threadID == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "thread ID is required")
+		return
+	}
+
+	var req models.ResolveThreadRequest
+	if handleDecodeError(w, decodeJSON(r, &req)) {
+		return
+	}
+
+	err = h.reviews.ResolveThread(r.Context(), pr.ID, threadID, req.Resolved)
+	if errors.Is(err, review.ErrThreadNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "thread not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "failed to resolve thread")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"thread_id": threadID, "resolved": req.Resolved})
+}
+
 func (h *PullHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r.Context())
 	if userID == nil {
