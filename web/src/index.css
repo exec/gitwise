@@ -1885,3 +1885,166 @@ button.tab {
   font-size: 0.6875rem;
   color: var(--text-muted);
 }
+
+/* ---- Organization page ---- */
+
+.org-page {
+  max-width: 900px;
+}
+
+.org-header {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 32px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.org-avatar {
+  width: 80px;
+  height: 80px;
+  border-radius: var(--radius-lg);
+  object-fit: cover;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.org-avatar-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 2rem;
+  font-weight: 600;
+}
+
+.org-header-info {
+  min-width: 0;
+}
+
+.org-display-name {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.org-name {
+  font-size: 1rem;
+  margin-top: 2px;
+}
+
+.org-description {
+  margin-top: 8px;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.org-section {
+  margin-bottom: 32px;
+}
+
+.org-section > h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.org-members {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.member-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  transition: border-color 0.15s;
+}
+
+.member-card:hover {
+  border-color: var(--text-muted);
+  text-decoration: none;
+  color: var(--text-primary);
+}
+
+.member-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.member-avatar-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.member-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.member-username {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-fullname {
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge-role {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+
+.badge-role-owner {
+  background: rgba(210, 153, 34, 0.15);
+  color: #d29922;
+}
+
+.badge-role-member {
+  background: rgba(139, 148, 158, 0.15);
+  color: var(--text-secondary);
+}
+
+.org-repos {
+  list-style: none;
+}
+
+.org-repo-item {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.org-repo-item:first-child {
+  border-top: 1px solid var(--border);
+}

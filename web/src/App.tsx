@@ -15,6 +15,7 @@ import NewPullPage from "./pages/NewPullPage";
 import SearchPage from "./pages/SearchPage";
 import ProfilePage from "./pages/ProfilePage";
 import EditProfilePage from "./pages/EditProfilePage";
+import OrgPage from "./pages/OrgPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -52,6 +53,9 @@ export default function App() {
 
         {/* Profile */}
         <Route path="/users/:username" element={<ProfilePage />} />
+
+        {/* Organizations */}
+        <Route path="/orgs/:name" element={<OrgPage />} />
         <Route
           path="/settings/profile"
           element={

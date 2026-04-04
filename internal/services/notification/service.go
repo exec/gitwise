@@ -42,7 +42,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, notifType, title
 	}
 
 	err := s.db.QueryRow(ctx, `
-		INSERT INTO notifications (id, user_id, type, title, body, link, read, metadata)
+		INSERT INTO notifications (id, user_id, type, title, body, link, is_read, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING created_at`,
 		n.ID, n.UserID, n.Type, n.Title, n.Body, n.Link, n.Read, n.Metadata,
@@ -68,7 +68,7 @@ func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID, unreadOnly 
 	}
 
 	query := `
-		SELECT id, user_id, type, title, body, link, read, metadata, created_at
+		SELECT id, user_id, type, title, body, link, is_read, metadata, created_at
 		FROM notifications
 		WHERE user_id = $1`
 
@@ -76,7 +76,7 @@ func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID, unreadOnly 
 	argIdx := 2
 
 	if unreadOnly {
-		query += fmt.Sprintf(` AND read = $%d`, argIdx)
+		query += fmt.Sprintf(` AND is_read = $%d`, argIdx)
 		args = append(args, false)
 		argIdx++
 	}
@@ -111,7 +111,7 @@ func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID, unreadOnly 
 
 func (s *Service) MarkRead(ctx context.Context, notifID, userID uuid.UUID) error {
 	tag, err := s.db.Exec(ctx, `
-		UPDATE notifications SET read = true
+		UPDATE notifications SET is_read = true
 		WHERE id = $1 AND user_id = $2`,
 		notifID, userID,
 	)
@@ -136,8 +136,8 @@ func (s *Service) MarkRead(ctx context.Context, notifID, userID uuid.UUID) error
 
 func (s *Service) MarkAllRead(ctx context.Context, userID uuid.UUID) error {
 	_, err := s.db.Exec(ctx, `
-		UPDATE notifications SET read = true
-		WHERE user_id = $1 AND read = false`,
+		UPDATE notifications SET is_read = true
+		WHERE user_id = $1 AND is_read = false`,
 		userID,
 	)
 	if err != nil {
@@ -150,7 +150,7 @@ func (s *Service) MarkAllRead(ctx context.Context, userID uuid.UUID) error {
 func (s *Service) GetByID(ctx context.Context, notifID, userID uuid.UUID) (*models.Notification, error) {
 	n := &models.Notification{}
 	err := s.db.QueryRow(ctx, `
-		SELECT id, user_id, type, title, body, link, read, metadata, created_at
+		SELECT id, user_id, type, title, body, link, is_read, metadata, created_at
 		FROM notifications
 		WHERE id = $1 AND user_id = $2`,
 		notifID, userID,
