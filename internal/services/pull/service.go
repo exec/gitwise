@@ -160,9 +160,10 @@ func (s *Service) List(ctx context.Context, repoID uuid.UUID, status string, lim
 		SELECT p.id, p.repo_id, p.number, p.author_id, u.username,
 		       p.title, p.body, p.source_branch, p.target_branch, p.status,
 		       p.intent, p.diff_stats, p.review_summary, p.merge_strategy,
-		       p.merged_by, p.merged_at, p.closed_at, p.created_at, p.updated_at
+		       p.merged_by, mu.username, p.merged_at, p.closed_at, p.created_at, p.updated_at
 		FROM pull_requests p
 		JOIN users u ON u.id = p.author_id
+		LEFT JOIN users mu ON mu.id = p.merged_by
 		WHERE p.repo_id = $1`
 
 	args := []any{repoID}
@@ -187,13 +188,17 @@ func (s *Service) List(ctx context.Context, repoID uuid.UUID, status string, lim
 	var prs []models.PullRequest
 	for rows.Next() {
 		var p models.PullRequest
+		var mergedByName *string
 		if err := rows.Scan(
 			&p.ID, &p.RepoID, &p.Number, &p.AuthorID, &p.AuthorName,
 			&p.Title, &p.Body, &p.SourceBranch, &p.TargetBranch, &p.Status,
 			&p.Intent, &p.DiffStats, &p.ReviewSummary, &p.MergeStrategy,
-			&p.MergedByID, &p.MergedAt, &p.ClosedAt, &p.CreatedAt, &p.UpdatedAt,
+			&p.MergedByID, &mergedByName, &p.MergedAt, &p.ClosedAt, &p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan PR: %w", err)
+		}
+		if mergedByName != nil {
+			p.MergedByName = *mergedByName
 		}
 		prs = append(prs, p)
 	}
