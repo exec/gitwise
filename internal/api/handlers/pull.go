@@ -56,6 +56,10 @@ func (h *PullHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 		return
 	}
+	if errors.Is(err, pull.ErrInvalidIntent) {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to create pull request")
 		return
@@ -164,7 +168,7 @@ func (h *PullHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "pull request not found")
 		return
 	}
-	if errors.Is(err, pull.ErrInvalidStatus) || errors.Is(err, pull.ErrInvalidBranch) || errors.Is(err, pull.ErrInvalidTitle) {
+	if errors.Is(err, pull.ErrInvalidStatus) || errors.Is(err, pull.ErrInvalidBranch) || errors.Is(err, pull.ErrInvalidTitle) || errors.Is(err, pull.ErrInvalidIntent) {
 		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 		return
 	}
