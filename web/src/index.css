@@ -949,6 +949,59 @@ input:disabled {
   color: #fff;
 }
 
+/* ---- PR Intent ---- */
+.pr-intent {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-size: 0.8125rem;
+}
+
+.intent-type-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 12px;
+  text-transform: capitalize;
+}
+
+.intent-type-badge.feature { background: rgba(63, 185, 80, 0.15); color: var(--success); }
+.intent-type-badge.bugfix { background: rgba(248, 81, 73, 0.15); color: var(--danger); }
+.intent-type-badge.refactor { background: rgba(88, 166, 255, 0.15); color: var(--accent); }
+.intent-type-badge.chore { background: rgba(139, 148, 158, 0.15); color: var(--text-secondary); }
+
+.intent-scope {
+  color: var(--text-secondary);
+}
+
+.intent-components {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.intent-component-label {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 0.6875rem;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+/* ---- Issue Assignees ---- */
+.issue-assignees {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
 /* ---- Diff viewer ---- */
 
 .diff-viewer {
