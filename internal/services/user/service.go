@@ -24,6 +24,7 @@ var (
 	ErrInvalidInput   = errors.New("invalid input")
 	ErrBadCredentials = errors.New("invalid credentials")
 	ErrTokenNotFound  = errors.New("token not found")
+	ErrTooManyPins    = errors.New("maximum 6 pinned repos allowed")
 )
 
 var usernameRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9._-]{0,37}[a-zA-Z0-9])?$`)
@@ -275,6 +276,124 @@ func (s *Service) DeleteToken(ctx context.Context, userID uuid.UUID, tokenID uui
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrTokenNotFound
+	}
+	return nil
+}
+
+// GetContributions returns per-day contribution counts for a user within a date range.
+// Contributions are aggregated from commits, issues, and pull requests.
+func (s *Service) GetContributions(ctx context.Context, userID uuid.UUID, from, to time.Time) ([]models.DayCount, error) {
+	query := `
+		SELECT d::date AS day, COALESCE(SUM(cnt), 0)::int AS count
+		FROM generate_series($2::date, $3::date, '1 day'::interval) d
+		LEFT JOIN (
+			SELECT committed_at::date AS day, COUNT(*) AS cnt
+			FROM commit_metadata WHERE author_id = $1
+			  AND committed_at >= $2 AND committed_at < ($3::date + '1 day'::interval)
+			GROUP BY 1
+			UNION ALL
+			SELECT created_at::date AS day, COUNT(*) AS cnt
+			FROM issues WHERE author_id = $1
+			  AND created_at >= $2 AND created_at < ($3::date + '1 day'::interval)
+			GROUP BY 1
+			UNION ALL
+			SELECT created_at::date AS day, COUNT(*) AS cnt
+			FROM pull_requests WHERE author_id = $1
+			  AND created_at >= $2 AND created_at < ($3::date + '1 day'::interval)
+			GROUP BY 1
+		) sub ON sub.day = d::date
+		GROUP BY 1
+		ORDER BY 1`
+
+	rows, err := s.db.Query(ctx, query, userID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("query contributions: %w", err)
+	}
+	defer rows.Close()
+
+	var days []models.DayCount
+	for rows.Next() {
+		var dc models.DayCount
+		var day time.Time
+		if err := rows.Scan(&day, &dc.Count); err != nil {
+			return nil, fmt.Errorf("scan contribution: %w", err)
+		}
+		dc.Date = day.Format("2006-01-02")
+		days = append(days, dc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate contributions: %w", err)
+	}
+	return days, nil
+}
+
+// ListPinnedRepos returns a user's pinned repositories with full repo details.
+func (s *Service) ListPinnedRepos(ctx context.Context, userID uuid.UUID) ([]models.PinnedRepo, error) {
+	query := `
+		SELECT p.position,
+		       r.id, r.owner_id, u.username, r.name, r.description, r.default_branch,
+		       r.visibility, r.language_stats, r.topics, r.stars_count, r.forks_count,
+		       r.created_at, r.updated_at
+		FROM pinned_repos p
+		JOIN repositories r ON r.id = p.repo_id
+		JOIN users u ON u.id = r.owner_id
+		WHERE p.user_id = $1
+		ORDER BY p.position`
+
+	rows, err := s.db.Query(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("query pinned repos: %w", err)
+	}
+	defer rows.Close()
+
+	var pinned []models.PinnedRepo
+	for rows.Next() {
+		var pr models.PinnedRepo
+		if err := rows.Scan(
+			&pr.Position,
+			&pr.Repository.ID, &pr.Repository.OwnerID, &pr.Repository.OwnerName,
+			&pr.Repository.Name, &pr.Repository.Description, &pr.Repository.DefaultBranch,
+			&pr.Repository.Visibility, &pr.Repository.LanguageStats, &pr.Repository.Topics,
+			&pr.Repository.StarsCount, &pr.Repository.ForksCount,
+			&pr.Repository.CreatedAt, &pr.Repository.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan pinned repo: %w", err)
+		}
+		pinned = append(pinned, pr)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pinned repos: %w", err)
+	}
+	return pinned, nil
+}
+
+// SetPinnedRepos replaces all pinned repos for a user. Maximum 6 repos.
+func (s *Service) SetPinnedRepos(ctx context.Context, userID uuid.UUID, repoIDs []uuid.UUID) error {
+	if len(repoIDs) > 6 {
+		return ErrTooManyPins
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM pinned_repos WHERE user_id = $1`, userID); err != nil {
+		return fmt.Errorf("delete pinned repos: %w", err)
+	}
+
+	for i, repoID := range repoIDs {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO pinned_repos (user_id, repo_id, position) VALUES ($1, $2, $3)`,
+			userID, repoID, i,
+		); err != nil {
+			return fmt.Errorf("insert pinned repo: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit pinned repos: %w", err)
 	}
 	return nil
 }

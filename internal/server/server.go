@@ -71,6 +71,7 @@ type Server struct {
 	milestoneHandler  *handlers.MilestoneHandler
 	notifHandler      *handlers.NotificationHandler
 	protectionHandler *handlers.ProtectionHandler
+	profileHandler    *handlers.ProfileHandler
 
 	// Git protocol
 	gitHTTP *git.HTTPHandler
@@ -126,6 +127,7 @@ func (s *Server) initServices() {
 	s.milestoneHandler = handlers.NewMilestoneHandler(s.repoSvc, s.milestoneSvc)
 	s.notifHandler = handlers.NewNotificationHandler(s.notifSvc)
 	s.protectionHandler = handlers.NewProtectionHandler(s.repoSvc, s.protectionSvc)
+	s.profileHandler = handlers.NewProfileHandler(s.userSvc)
 
 	// Git HTTP protocol
 	s.gitHTTP = git.NewHTTPHandler(s.gitSvc, func(username, password string) (string, bool) {
@@ -254,6 +256,13 @@ func (s *Server) setupRoutes() {
 		// User profiles
 		r.Get("/users/{username}", s.handleGetUser)
 		r.Get("/users/{username}/repos", s.handleListUserRepos)
+		r.Get("/users/{username}/contributions", s.profileHandler.GetContributions)
+		r.Get("/users/{username}/pinned-repos", s.profileHandler.ListPinnedRepos)
+		r.Get("/users/{username}/activity", s.profileHandler.GetActivity)
+
+		// Authenticated profile actions
+		r.With(middleware.RequireAuth).Patch("/user/profile", s.profileHandler.UpdateProfile)
+		r.With(middleware.RequireAuth).Put("/user/pinned-repos", s.profileHandler.SetPinnedRepos)
 
 		// Search (stub)
 		r.Post("/search", handleNotImplemented)
