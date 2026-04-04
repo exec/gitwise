@@ -12,6 +12,7 @@ export default function NewIssuePage() {
   const navigate = useNavigate();
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [assignees, setAssignees] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -21,9 +22,13 @@ export default function NewIssuePage() {
     setSubmitting(true);
 
     try {
+      const parsedAssignees = assignees
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
       const { data } = await post<Issue>(
         `/repos/${owner}/${repo}/issues`,
-        { title, body },
+        { title, body, assignees: parsedAssignees },
       );
       navigate(`/${owner}/${repo}/issues/${data.number}`);
     } catch (err) {
@@ -64,6 +69,17 @@ export default function NewIssuePage() {
               onChange={(e) => setBody(e.target.value)}
               placeholder="Describe the issue..."
               rows={8}
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="assignees">Assignees</label>
+            <input
+              id="assignees"
+              type="text"
+              className="form-input"
+              value={assignees}
+              onChange={(e) => setAssignees(e.target.value)}
+              placeholder="Comma-separated usernames"
             />
           </div>
           <button

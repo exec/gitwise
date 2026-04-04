@@ -50,9 +50,14 @@ func (s *Service) Create(ctx context.Context, repoID, authorID uuid.UUID, req mo
 		labels = []string{}
 	}
 
+	assignees, err := s.resolveAssignees(ctx, req.Assignees)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get the next issue/PR number for this repo
 	var number int
-	err := s.db.QueryRow(ctx, `SELECT next_repo_number($1)`, repoID).Scan(&number)
+	err = s.db.QueryRow(ctx, `SELECT next_repo_number($1)`, repoID).Scan(&number)
 	if err != nil {
 		return nil, fmt.Errorf("get next number: %w", err)
 	}
@@ -66,7 +71,7 @@ func (s *Service) Create(ctx context.Context, repoID, authorID uuid.UUID, req mo
 		Body:      req.Body,
 		Status:    "open",
 		Labels:    labels,
-		Assignees: []uuid.UUID{},
+		Assignees: assignees,
 		LinkedPRs: []uuid.UUID{},
 		Priority:  priority,
 		Metadata:  json.RawMessage(`{}`),
@@ -216,6 +221,15 @@ func (s *Service) Update(ctx context.Context, repoID uuid.UUID, number int, req 
 		args = append(args, *req.Priority)
 		argIdx++
 	}
+	if req.Assignees != nil {
+		assignees, err := s.resolveAssignees(ctx, *req.Assignees)
+		if err != nil {
+			return nil, err
+		}
+		setClauses = append(setClauses, fmt.Sprintf("assignees = $%d", argIdx))
+		args = append(args, assignees)
+		argIdx++
+	}
 
 	query := fmt.Sprintf(`
 		UPDATE issues SET %s
@@ -256,4 +270,28 @@ func isValidPriority(p string) bool {
 		return true
 	}
 	return false
+}
+
+// resolveAssignees converts a list of usernames to UUIDs by querying the users table.
+func (s *Service) resolveAssignees(ctx context.Context, usernames []string) ([]uuid.UUID, error) {
+	if len(usernames) == 0 {
+		return []uuid.UUID{}, nil
+	}
+	assignees := make([]uuid.UUID, 0, len(usernames))
+	for _, username := range usernames {
+		username = strings.TrimSpace(username)
+		if username == "" {
+			continue
+		}
+		var id uuid.UUID
+		err := s.db.QueryRow(ctx, `SELECT id FROM users WHERE username = $1`, username).Scan(&id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("assignee %q not found", username)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("resolve assignee %q: %w", username, err)
+		}
+		assignees = append(assignees, id)
+	}
+	return assignees, nil
 }
