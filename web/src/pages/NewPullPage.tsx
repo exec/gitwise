@@ -23,6 +23,9 @@ export default function NewPullPage() {
   const [body, setBody] = useState("");
   const [sourceBranch, setSourceBranch] = useState("");
   const [targetBranch, setTargetBranch] = useState("");
+  const [intentType, setIntentType] = useState("");
+  const [intentScope, setIntentScope] = useState("");
+  const [intentComponents, setIntentComponents] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -50,12 +53,23 @@ export default function NewPullPage() {
     setSubmitting(true);
 
     try {
-      const { data } = await post<PR>(`/repos/${owner}/${repo}/pulls`, {
+      const payload: Record<string, unknown> = {
         title,
         body,
         source_branch: sourceBranch,
         target_branch: targetBranch,
-      });
+      };
+      if (intentType) {
+        payload.intent = {
+          type: intentType,
+          scope: intentScope,
+          components: intentComponents
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        };
+      }
+      const { data } = await post<PR>(`/repos/${owner}/${repo}/pulls`, payload);
       navigate(`/${owner}/${repo}/pulls/${data.number}`);
     } catch (err) {
       setError(
@@ -135,6 +149,43 @@ export default function NewPullPage() {
               onChange={(e) => setBody(e.target.value)}
               placeholder="Describe your changes..."
               rows={8}
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="intentType">Type</label>
+            <select
+              id="intentType"
+              className="form-select"
+              value={intentType}
+              onChange={(e) => setIntentType(e.target.value)}
+            >
+              <option value="">None</option>
+              <option value="feature">Feature</option>
+              <option value="bugfix">Bugfix</option>
+              <option value="refactor">Refactor</option>
+              <option value="chore">Chore</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label htmlFor="intentScope">Scope</label>
+            <input
+              id="intentScope"
+              type="text"
+              className="form-input"
+              value={intentScope}
+              onChange={(e) => setIntentScope(e.target.value)}
+              placeholder="e.g. auth, api, frontend"
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="intentComponents">Components</label>
+            <input
+              id="intentComponents"
+              type="text"
+              className="form-input"
+              value={intentComponents}
+              onChange={(e) => setIntentComponents(e.target.value)}
+              placeholder="Comma-separated, e.g. login, signup"
             />
           </div>
           <button

@@ -6,6 +6,12 @@ import { useAuthStore } from "../stores/auth";
 import RepoHeader from "../components/RepoHeader";
 import DiffViewer from "../components/DiffViewer";
 
+interface PRIntent {
+  type?: string;
+  scope?: string;
+  components?: string[];
+}
+
 interface PullRequest {
   id: string;
   number: number;
@@ -16,6 +22,7 @@ interface PullRequest {
   source_branch: string;
   target_branch: string;
   status: string;
+  intent: PRIntent;
   diff_stats: {
     files_changed: number;
     insertions: number;
@@ -212,6 +219,26 @@ export default function PullDetailPage() {
             </span>
           </div>
         </div>
+
+        {pr.intent?.type && (
+          <div className="pr-intent">
+            <span className={`intent-type-badge ${pr.intent.type}`}>
+              {pr.intent.type}
+            </span>
+            {pr.intent.scope && (
+              <span className="intent-scope">{pr.intent.scope}</span>
+            )}
+            {pr.intent.components && pr.intent.components.length > 0 && (
+              <span className="intent-components">
+                {pr.intent.components.map((c) => (
+                  <span key={c} className="intent-component-label">
+                    {c}
+                  </span>
+                ))}
+              </span>
+            )}
+          </div>
+        )}
 
         {pr.review_summary.approved_by &&
           pr.review_summary.approved_by.length > 0 && (

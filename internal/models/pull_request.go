@@ -30,19 +30,27 @@ type PullRequest struct {
 	UpdatedAt     time.Time       `json:"updated_at"`
 }
 
+type PRIntent struct {
+	Type       string   `json:"type"`       // feature, bugfix, refactor, chore
+	Scope      string   `json:"scope"`
+	Components []string `json:"components"`
+}
+
 type CreatePullRequestRequest struct {
-	Title        string `json:"title"`
-	Body         string `json:"body"`
-	SourceBranch string `json:"source_branch"`
-	TargetBranch string `json:"target_branch"`
-	Draft        bool   `json:"draft"`
+	Title        string    `json:"title"`
+	Body         string    `json:"body"`
+	SourceBranch string    `json:"source_branch"`
+	TargetBranch string    `json:"target_branch"`
+	Draft        bool      `json:"draft"`
+	Intent       *PRIntent `json:"intent,omitempty"`
 }
 
 type UpdatePullRequestRequest struct {
-	Title        *string `json:"title,omitempty"`
-	Body         *string `json:"body,omitempty"`
-	TargetBranch *string `json:"target_branch,omitempty"`
-	Status       *string `json:"status,omitempty"` // draft, open, closed (not merged — use merge endpoint)
+	Title        *string   `json:"title,omitempty"`
+	Body         *string   `json:"body,omitempty"`
+	TargetBranch *string   `json:"target_branch,omitempty"`
+	Status       *string   `json:"status,omitempty"` // draft, open, closed (not merged — use merge endpoint)
+	Intent       *PRIntent `json:"intent,omitempty"`
 }
 
 type MergePullRequestRequest struct {

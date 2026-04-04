@@ -22,6 +22,7 @@ var (
 	ErrInvalidTitle    = errors.New("title is required")
 	ErrInvalidStatus   = errors.New("invalid status")
 	ErrInvalidBranch   = errors.New("invalid branch")
+	ErrInvalidIntent   = errors.New("invalid intent: type must be feature, bugfix, refactor, or chore")
 	ErrSameBranch      = errors.New("source and target branches must differ")
 	ErrAlreadyMerged   = errors.New("pull request is already merged")
 	ErrNotOpen         = errors.New("pull request is not open")
@@ -92,6 +93,11 @@ func (s *Service) Create(ctx context.Context, repoID, authorID uuid.UUID, ownerN
 		"files":         fileStats,
 	})
 
+	intentJSON, err := marshalIntent(req.Intent)
+	if err != nil {
+		return nil, err
+	}
+
 	status := "open"
 	if req.Draft {
 		status = "draft"
@@ -113,7 +119,7 @@ func (s *Service) Create(ctx context.Context, repoID, authorID uuid.UUID, ownerN
 		SourceBranch:  req.SourceBranch,
 		TargetBranch:  req.TargetBranch,
 		Status:        status,
-		Intent:        json.RawMessage(`{}`),
+		Intent:        intentJSON,
 		DiffStats:     statsJSON,
 		ReviewSummary: json.RawMessage(`{}`),
 		CreatedAt:     time.Now(),
@@ -269,6 +275,15 @@ func (s *Service) Update(ctx context.Context, repoID uuid.UUID, number int, req 
 		args = append(args, *req.Status)
 		argIdx++
 	}
+	if req.Intent != nil {
+		intentJSON, err := marshalIntent(req.Intent)
+		if err != nil {
+			return nil, err
+		}
+		setClauses = append(setClauses, fmt.Sprintf("intent = $%d", argIdx))
+		args = append(args, intentJSON)
+		argIdx++
+	}
 
 	query := fmt.Sprintf(`
 		UPDATE pull_requests SET %s
@@ -378,4 +393,26 @@ func isValidPRStatus(s string) bool {
 		return true
 	}
 	return false
+}
+
+func isValidIntentType(t string) bool {
+	switch t {
+	case "feature", "bugfix", "refactor", "chore":
+		return true
+	}
+	return false
+}
+
+func marshalIntent(intent *models.PRIntent) (json.RawMessage, error) {
+	if intent == nil {
+		return json.RawMessage(`{}`), nil
+	}
+	if !isValidIntentType(intent.Type) {
+		return nil, ErrInvalidIntent
+	}
+	data, err := json.Marshal(intent)
+	if err != nil {
+		return nil, fmt.Errorf("marshal intent: %w", err)
+	}
+	return data, nil
 }
