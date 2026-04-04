@@ -8,63 +8,162 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
+	"github.com/gitwise-io/gitwise/internal/api/handlers"
 	"github.com/gitwise-io/gitwise/internal/config"
+	"github.com/gitwise-io/gitwise/internal/git"
+	"github.com/gitwise-io/gitwise/internal/middleware"
+	"github.com/gitwise-io/gitwise/internal/services/repo"
+	"github.com/gitwise-io/gitwise/internal/services/user"
 )
 
 type Server struct {
 	cfg    *config.Config
 	router *chi.Mux
 	db     *pgxpool.Pool
+	rdb    *redis.Client
 	http   *http.Server
+
+	// Services
+	userSvc *user.Service
+	repoSvc *repo.Service
+	gitSvc  *git.Service
+
+	// Middleware
+	sessions *middleware.SessionManager
+	auth     *middleware.Auth
+
+	// Handlers
+	authHandler   *handlers.AuthHandler
+	repoHandler   *handlers.RepoHandler
+	browseHandler *handlers.BrowseHandler
+
+	// Git protocol
+	gitHTTP *git.HTTPHandler
 }
 
-func New(cfg *config.Config, db *pgxpool.Pool) *Server {
+func New(cfg *config.Config, db *pgxpool.Pool, rdb *redis.Client) *Server {
 	s := &Server{
 		cfg:    cfg,
 		router: chi.NewRouter(),
 		db:     db,
+		rdb:    rdb,
 	}
+
+	s.initServices()
 	s.setupMiddleware()
 	s.setupRoutes()
+
 	return s
 }
 
+func (s *Server) initServices() {
+	// Core services
+	s.gitSvc = git.NewService(s.cfg.Git.ReposPath)
+	s.userSvc = user.NewService(s.db)
+	s.repoSvc = repo.NewService(s.db, s.gitSvc)
+
+	// Auth
+	s.sessions = middleware.NewSessionManager(s.rdb)
+	s.auth = middleware.NewAuth(s.sessions, s.userSvc)
+
+	// Handlers
+	s.authHandler = handlers.NewAuthHandler(s.userSvc, s.sessions)
+	s.repoHandler = handlers.NewRepoHandler(s.repoSvc)
+	s.browseHandler = handlers.NewBrowseHandler(s.repoSvc, s.gitSvc)
+
+	// Git HTTP protocol
+	s.gitHTTP = git.NewHTTPHandler(s.gitSvc, func(username, password string) (string, bool) {
+		u, err := s.userSvc.Authenticate(context.Background(), username, password)
+		if err != nil {
+			// Try API token
+			u, err = s.userSvc.ValidateToken(context.Background(), password)
+			if err != nil {
+				return "", false
+			}
+		}
+		return u.Username, true
+	})
+}
+
 func (s *Server) setupMiddleware() {
-	s.router.Use(middleware.RequestID)
-	s.router.Use(middleware.RealIP)
-	s.router.Use(middleware.Logger)
-	s.router.Use(middleware.Recoverer)
-	s.router.Use(middleware.Timeout(30 * time.Second))
+	s.router.Use(chimw.RequestID)
+	s.router.Use(chimw.RealIP)
+	s.router.Use(chimw.Logger)
+	s.router.Use(chimw.Recoverer)
+	s.router.Use(corsMiddleware)
+	s.router.Use(s.auth.Handler)
 }
 
 func (s *Server) setupRoutes() {
+	// Health check
 	s.router.Get("/healthz", s.handleHealth)
 
+	// Git smart HTTP protocol
+	s.router.Handle("/{owner}/{repo}.git/*", s.gitHTTP)
+
+	// API v1
 	s.router.Route("/api/v1", func(r chi.Router) {
-		// Repository routes
-		r.Route("/repos", func(r chi.Router) {
-			r.Post("/", s.handleNotImplemented)
-			r.Get("/{owner}/{repo}", s.handleNotImplemented)
-			r.Get("/{owner}/{repo}/tree/{ref}/*", s.handleNotImplemented)
-			r.Get("/{owner}/{repo}/blob/{ref}/*", s.handleNotImplemented)
-			r.Get("/{owner}/{repo}/commits", s.handleNotImplemented)
+		// Auth
+		r.Post("/auth/register", s.authHandler.Register)
+		r.Post("/auth/login", s.authHandler.Login)
+		r.Post("/auth/logout", s.authHandler.Logout)
+		r.Get("/auth/me", s.authHandler.Me)
 
-			// Pull request routes
-			r.Post("/{owner}/{repo}/pulls", s.handleNotImplemented)
-			r.Get("/{owner}/{repo}/pulls/{number}", s.handleNotImplemented)
-			r.Post("/{owner}/{repo}/pulls/{number}/reviews", s.handleNotImplemented)
-			r.Put("/{owner}/{repo}/pulls/{number}/merge", s.handleNotImplemented)
-
-			// Issue routes
-			r.Post("/{owner}/{repo}/issues", s.handleNotImplemented)
-			r.Get("/{owner}/{repo}/issues/{number}", s.handleNotImplemented)
+		// API tokens (authenticated)
+		r.Route("/auth/tokens", func(r chi.Router) {
+			r.Use(middleware.RequireAuth)
+			r.Post("/", s.authHandler.CreateToken)
+			r.Get("/", s.authHandler.ListTokens)
+			r.Delete("/{tokenID}", s.authHandler.DeleteToken)
 		})
 
-		// Search
-		r.Post("/search", s.handleNotImplemented)
+		// User repos (authenticated)
+		r.With(middleware.RequireAuth).Get("/user/repos", s.repoHandler.ListMine)
+
+		// Repository operations
+		r.Route("/repos", func(r chi.Router) {
+			r.With(middleware.RequireAuth).Post("/", s.repoHandler.Create)
+
+			r.Route("/{owner}/{repo}", func(r chi.Router) {
+				r.Get("/", s.repoHandler.Get)
+				r.With(middleware.RequireAuth).Patch("/", s.repoHandler.Update)
+				r.With(middleware.RequireAuth).Delete("/", s.repoHandler.Delete)
+
+				// Code browsing
+				r.Get("/tree/{ref}/*", s.browseHandler.GetTree)
+				r.Get("/tree/{ref}", s.browseHandler.GetTree) // root tree
+				r.Get("/blob/{ref}/*", s.browseHandler.GetBlob)
+				r.Get("/raw/{ref}/*", s.browseHandler.GetRawBlob)
+
+				// Commits
+				r.Get("/commits", s.browseHandler.ListCommits)
+				r.Get("/commits/{sha}", s.browseHandler.GetCommit)
+
+				// Branches
+				r.Get("/branches", s.browseHandler.ListBranches)
+
+				// Pull requests (stub)
+				r.Post("/pulls", handleNotImplemented)
+				r.Get("/pulls/{number}", handleNotImplemented)
+				r.Post("/pulls/{number}/reviews", handleNotImplemented)
+				r.Put("/pulls/{number}/merge", handleNotImplemented)
+
+				// Issues (stub)
+				r.Post("/issues", handleNotImplemented)
+				r.Get("/issues/{number}", handleNotImplemented)
+			})
+		})
+
+		// User profiles
+		r.Get("/users/{username}", s.handleGetUser)
+		r.Get("/users/{username}/repos", s.handleListUserRepos)
+
+		// Search (stub)
+		r.Post("/search", handleNotImplemented)
 	})
 }
 
@@ -74,7 +173,7 @@ func (s *Server) Start() error {
 		Addr:              addr,
 		Handler:           s.router,
 		ReadHeaderTimeout: 10 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 	slog.Info("server starting", "addr", addr)
@@ -88,11 +187,51 @@ func (s *Server) Shutdown(ctx context.Context) error {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"ok"}`)
+	fmt.Fprintf(w, `{"data":{"status":"ok"}}`)
 }
 
-func (s *Server) handleNotImplemented(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
+	username := chi.URLParam(r, "username")
+	u, err := s.userSvc.GetByUsername(r.Context(), username)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprintf(w, `{"errors":[{"code":"not_found","message":"user not found"}]}`)
+		return
+	}
+	handlers.WriteUserJSON(w, u)
+}
+
+func (s *Server) handleListUserRepos(w http.ResponseWriter, r *http.Request) {
+	owner := chi.URLParam(r, "username")
+	repos, err := s.repoSvc.ListByOwner(r.Context(), owner, 100)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, `{"errors":[{"code":"server_error","message":"failed to list repos"}]}`)
+		return
+	}
+	handlers.WriteReposJSON(w, repos)
+}
+
+func handleNotImplemented(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotImplemented)
-	fmt.Fprintf(w, `{"error":"not implemented"}`)
+	fmt.Fprintf(w, `{"errors":[{"code":"not_implemented","message":"this endpoint is not yet implemented"}]}`)
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
