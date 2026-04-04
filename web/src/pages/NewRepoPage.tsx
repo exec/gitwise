@@ -14,7 +14,7 @@ interface CreateRepoPayload {
 
 interface Repo {
   id: string;
-  owner: string;
+  owner_name: string;
   name: string;
 }
 
@@ -32,7 +32,7 @@ export default function NewRepoPage() {
     mutationFn: (payload: CreateRepoPayload) =>
       post<Repo>("/repos", payload).then((r) => r.data),
     onSuccess: (repo) => {
-      navigate(`/${repo.owner}/${repo.name}`);
+      navigate(`/${repo.owner_name}/${repo.name}`);
     },
     onError: (err) => {
       if (err instanceof ApiError) {

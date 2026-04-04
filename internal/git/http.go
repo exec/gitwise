@@ -37,6 +37,11 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	repoName := strings.TrimSuffix(parts[1], ".git")
 	action := parts[2]
 
+	if err := ValidatePath(owner, repoName); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
 	repoPath := h.git.RepoPath(owner, repoName)
 	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
 		http.NotFound(w, r)
@@ -114,18 +119,17 @@ func (h *HTTPHandler) serveGitCommand(w http.ResponseWriter, r *http.Request, se
 
 	cmd := exec.Command("git", service, "--stateless-rpc", repoPath)
 	cmd.Stdin = body
+	cmd.Stdout = w
 	cmd.Stderr = os.Stderr
-
-	out, err := cmd.Output()
-	if err != nil {
-		slog.Error("git command failed", "error", err, "service", service)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
 
 	w.Header().Set("Content-Type", fmt.Sprintf("application/x-git-%s-result", service))
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(out)
+
+	if err := cmd.Run(); err != nil {
+		slog.Error("git command failed", "error", err, "service", service)
+		// Can't write HTTP error — headers/body may already be partially written
+		return
+	}
 }
 
 func (h *HTTPHandler) requireAuth(w http.ResponseWriter, r *http.Request) bool {

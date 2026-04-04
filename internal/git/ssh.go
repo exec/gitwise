@@ -81,6 +81,13 @@ func (s *SSHServer) handleSession(sess gossh.Session) {
 
 	owner := repoParts[0]
 	repoName := repoParts[1]
+
+	if err := ValidatePath(owner, repoName); err != nil {
+		fmt.Fprintln(sess.Stderr(), "invalid repository path")
+		sess.Exit(1)
+		return
+	}
+
 	repoPath := s.git.RepoPath(owner, repoName)
 
 	cmd := exec.Command("git", service[4:], repoPath) // strip "git-" prefix

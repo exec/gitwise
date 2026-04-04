@@ -4,7 +4,7 @@ import { get } from "../lib/api";
 
 interface Repo {
   id: string;
-  owner: string;
+  owner_name: string;
   name: string;
   description: string;
   visibility: string;
@@ -48,8 +48,8 @@ export default function DashboardPage() {
           {repos.map((repo) => (
             <li key={repo.id} className="repo-list-item">
               <div className="repo-info">
-                <Link to={`/${repo.owner}/${repo.name}`} className="repo-name">
-                  {repo.owner}/{repo.name}
+                <Link to={`/${repo.owner_name}/${repo.name}`} className="repo-name">
+                  {repo.owner_name}/{repo.name}
                 </Link>
                 <span className={`badge badge-${repo.visibility}`}>{repo.visibility}</span>
               </div>

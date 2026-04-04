@@ -1,17 +1,23 @@
 const BASE = "/api/v1";
 
+interface ApiErrorEntry {
+  code: string;
+  message: string;
+  field?: string;
+}
+
 interface ApiEnvelope<T> {
   data: T;
   meta?: Record<string, unknown>;
-  errors?: string[];
+  errors?: ApiErrorEntry[];
 }
 
 export class ApiError extends Error {
   status: number;
-  errors: string[];
+  errors: ApiErrorEntry[];
 
-  constructor(status: number, errors: string[]) {
-    super(errors[0] ?? `API error ${status}`);
+  constructor(status: number, errors: ApiErrorEntry[]) {
+    super(errors[0]?.message ?? `API error ${status}`);
     this.name = "ApiError";
     this.status = status;
     this.errors = errors;
@@ -40,7 +46,7 @@ async function request<T>(
   if (!res.ok || envelope.errors?.length) {
     throw new ApiError(
       res.status,
-      envelope.errors ?? [`Request failed with status ${res.status}`],
+      envelope.errors ?? [{ code: "unknown", message: `Request failed with status ${res.status}` }],
     );
   }
 
@@ -53,6 +59,14 @@ export function get<T>(path: string) {
 
 export function post<T>(path: string, body?: unknown) {
   return request<T>("POST", path, body);
+}
+
+export function patch<T>(path: string, body?: unknown) {
+  return request<T>("PATCH", path, body);
+}
+
+export function put<T>(path: string, body?: unknown) {
+  return request<T>("PUT", path, body);
 }
 
 export function del<T>(path: string) {

@@ -3,8 +3,12 @@ package server
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -165,6 +169,9 @@ func (s *Server) setupRoutes() {
 		// Search (stub)
 		r.Post("/search", handleNotImplemented)
 	})
+
+	// SPA frontend: serve static files from web/dist, fallback to index.html
+	s.router.NotFound(s.spaHandler())
 }
 
 func (s *Server) Start() error {
@@ -212,6 +219,42 @@ func (s *Server) handleListUserRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handlers.WriteReposJSON(w, repos)
+}
+
+// spaHandler serves the React SPA from the frontend dist directory.
+// Static assets (JS, CSS, images) are served directly. All other requests
+// get index.html so client-side routing works.
+func (s *Server) spaHandler() http.HandlerFunc {
+	distPath := s.cfg.Frontend.DistPath
+	fileServer := http.FileServer(http.Dir(distPath))
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Don't serve SPA for git protocol or API paths
+		path := r.URL.Path
+		if strings.HasSuffix(path, ".git") || strings.Contains(path, ".git/") {
+			http.NotFound(w, r)
+			return
+		}
+
+		// Try to serve the file directly (JS, CSS, images, etc.)
+		filePath := filepath.Join(distPath, filepath.Clean(path))
+		if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		// Fallback: serve index.html for client-side routing
+		indexPath := filepath.Join(distPath, "index.html")
+		if _, err := fs.Stat(os.DirFS(distPath), "index.html"); err != nil {
+			slog.Warn("frontend not built", "path", indexPath, "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"errors":[{"code":"no_frontend","message":"frontend not built — run 'cd web && npm run build'"}]}`)
+			return
+		}
+
+		http.ServeFile(w, r, indexPath)
+	}
 }
 
 func handleNotImplemented(w http.ResponseWriter, r *http.Request) {

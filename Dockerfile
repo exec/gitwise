@@ -18,7 +18,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /gitwise ./cmd/gitwise
 
 # Stage 3: Runtime
 FROM alpine:3.21
-RUN apk add --no-cache git ca-certificates tzdata
+RUN apk add --no-cache git ca-certificates tzdata && \
+    addgroup -S gitwise && adduser -S gitwise -G gitwise && \
+    mkdir -p /data/repos && chown gitwise:gitwise /data/repos
 COPY --from=backend /gitwise /usr/local/bin/gitwise
+USER gitwise
 EXPOSE 3000
 ENTRYPOINT ["gitwise"]

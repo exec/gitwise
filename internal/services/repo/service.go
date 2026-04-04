@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -94,7 +95,7 @@ func (s *Service) Create(ctx context.Context, ownerID uuid.UUID, req models.Crea
 
 	if req.AutoInit {
 		if err := s.git.AutoInit(ownerName, req.Name, req.DefaultBranch); err != nil {
-			// Non-fatal: repo DB record exists, just no initial commit
+			slog.Error("auto-init failed", "repo", ownerName+"/"+req.Name, "error", err)
 		}
 	}
 

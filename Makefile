@@ -29,15 +29,18 @@ lint:
 
 # Frontend
 frontend:
-	cd web && npm run build
+	cd web && npm ci --silent && npm run build
 
 frontend-dev:
 	cd web && npm run dev
 
 # Database
 migrate:
-	@echo "Running migrations..."
-	@go run ./cmd/gitwise migrate
+	@echo "Applying migrations..."
+	@for f in migrations/*.sql; do \
+		echo "  $$f"; \
+		docker exec -i gitwise-postgres-1 psql -U gitwise -d gitwise < $$f; \
+	done
 
 # Docker
 docker-up:

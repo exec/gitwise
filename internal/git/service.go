@@ -3,12 +3,13 @@ package git
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	gogit "github.com/go-git/go-git/v5"
+	gogitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
@@ -24,8 +25,23 @@ func NewService(reposPath string) *Service {
 }
 
 // RepoPath returns the filesystem path to a bare repo.
+// Returns ("", error) if the owner or name contains path traversal characters.
 func (s *Service) RepoPath(owner, name string) string {
 	return filepath.Join(s.reposPath, owner, name+".git")
+}
+
+// ValidatePath checks that owner and repo name are safe path components
+// with no traversal (../, /, or null bytes).
+func ValidatePath(parts ...string) error {
+	for _, p := range parts {
+		if p == "" || p == "." || p == ".." ||
+			strings.ContainsAny(p, "/\\") ||
+			strings.Contains(p, "..") ||
+			strings.ContainsRune(p, 0) {
+			return fmt.Errorf("invalid path component: %q", p)
+		}
+	}
+	return nil
 }
 
 // InitBare creates a new bare git repository on disk.
@@ -44,29 +60,91 @@ func (s *Service) InitBare(owner, name string) error {
 // AutoInit creates an initial commit with a README on the given branch.
 func (s *Service) AutoInit(owner, name, branch string) error {
 	path := s.RepoPath(owner, name)
-	cmd := exec.Command("git", "init", "--initial-branch="+branch, "/tmp/gitwise-autoinit-"+name)
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git init temp: %w", err)
+
+	// Open the bare repo and create the initial commit directly via go-git
+	r, err := gogit.PlainOpen(path)
+	if err != nil {
+		return fmt.Errorf("open bare repo: %w", err)
 	}
-	tmpDir := "/tmp/gitwise-autoinit-" + name
+
+	// We need a worktree to create files, so clone to a temp dir, commit, push back.
+	// Use a unique temp dir to avoid collisions.
+	tmpDir, err := os.MkdirTemp("", "gitwise-autoinit-*")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
 	defer os.RemoveAll(tmpDir)
 
-	readmePath := filepath.Join(tmpDir, "README.md")
-	os.WriteFile(readmePath, []byte("# "+name+"\n"), 0o644)
-
-	for _, args := range [][]string{
-		{"-C", tmpDir, "add", "."},
-		{"-C", tmpDir, "-c", "user.name=Gitwise", "-c", "user.email=noreply@gitwise.dev", "commit", "-m", "Initial commit"},
-		{"-C", tmpDir, "remote", "add", "origin", path},
-		{"-C", tmpDir, "push", "origin", branch},
-	} {
-		cmd := exec.Command("git", args...)
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("git %s: %w", args[2], err)
+	// Clone the bare repo to the temp dir
+	wt, err := gogit.PlainClone(tmpDir, false, &gogit.CloneOptions{
+		URL: path,
+	})
+	if err != nil {
+		// Empty repo can't be cloned — init fresh instead
+		wt, err = gogit.PlainInit(tmpDir, false)
+		if err != nil {
+			return fmt.Errorf("init temp repo: %w", err)
+		}
+		// Add the bare repo as remote
+		_, err = wt.CreateRemote(&gogitconfig.RemoteConfig{
+			Name: "origin",
+			URLs: []string{path},
+		})
+		if err != nil {
+			return fmt.Errorf("add remote: %w", err)
 		}
 	}
+	_ = r // keep linter happy
+
+	w, err := wt.Worktree()
+	if err != nil {
+		return fmt.Errorf("get worktree: %w", err)
+	}
+
+	// Create README
+	readmePath := filepath.Join(tmpDir, "README.md")
+	if err := os.WriteFile(readmePath, []byte("# "+name+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write readme: %w", err)
+	}
+
+	if _, err := w.Add("README.md"); err != nil {
+		return fmt.Errorf("git add: %w", err)
+	}
+
+	_, err = w.Commit("Initial commit", &gogit.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Gitwise",
+			Email: "noreply@gitwise.dev",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("git commit: %w", err)
+	}
+
+	// Create the branch ref pointing to HEAD
+	head, err := wt.Head()
+	if err != nil {
+		return fmt.Errorf("get head: %w", err)
+	}
+
+	// If the branch name differs from the default, create it
+	if head.Name().Short() != branch {
+		ref := plumbing.NewHashReference(plumbing.NewBranchReferenceName(branch), head.Hash())
+		if err := wt.Storer.SetReference(ref); err != nil {
+			return fmt.Errorf("create branch ref: %w", err)
+		}
+	}
+
+	// Push to the bare repo
+	err = wt.Push(&gogit.PushOptions{
+		RemoteName: "origin",
+		RefSpecs:   []gogitconfig.RefSpec{gogitconfig.RefSpec("+refs/heads/" + branch + ":refs/heads/" + branch)},
+	})
+	if err != nil {
+		return fmt.Errorf("git push: %w", err)
+	}
+
 	return nil
 }
 

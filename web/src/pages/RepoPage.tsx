@@ -4,7 +4,7 @@ import { get } from "../lib/api";
 
 interface Repo {
   id: string;
-  owner: string;
+  owner_name: string;
   name: string;
   description: string;
   visibility: string;
@@ -113,7 +113,7 @@ export default function RepoPage() {
   }
 
   if (repoQuery.error) {
-    return <div className="error-banner">{String(repoQuery.error)}</div>;
+    return <div className="error-banner">{repoQuery.error instanceof Error ? repoQuery.error.message : "Failed to load repository"}</div>;
   }
 
   const repoData = repoQuery.data;
@@ -136,7 +136,7 @@ export default function RepoPage() {
         <div className="repo-title">
           <h1>
             <Link to={`/${owner}`} className="owner-link">
-              {repoData.owner}
+              {repoData.owner_name}
             </Link>
             {" / "}
             <Link to={`/${owner}/${repo}`}>{repoData.name}</Link>
@@ -205,7 +205,7 @@ export default function RepoPage() {
                 <p className="muted">Loading files...</p>
               )}
               {treeQuery.error && (
-                <div className="error-banner">{String(treeQuery.error)}</div>
+                <div className="error-banner">{treeQuery.error instanceof Error ? treeQuery.error.message : "Failed to load files"}</div>
               )}
               {treeQuery.data && (
                 <table className="file-table">
@@ -267,7 +267,7 @@ export default function RepoPage() {
             <p className="muted">Loading commits...</p>
           )}
           {commitsQuery.error && (
-            <div className="error-banner">{String(commitsQuery.error)}</div>
+            <div className="error-banner">{commitsQuery.error instanceof Error ? commitsQuery.error.message : "Failed to load commits"}</div>
           )}
           {commitsQuery.data && (
             <ul className="commit-list">

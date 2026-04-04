@@ -12,6 +12,7 @@ type Config struct {
 	Database DatabaseConfig
 	Redis    RedisConfig
 	Git      GitConfig
+	Frontend FrontendConfig
 	Secret   string
 }
 
@@ -46,6 +47,10 @@ type GitConfig struct {
 	ReposPath string
 }
 
+type FrontendConfig struct {
+	DistPath string // path to built frontend assets (web/dist)
+}
+
 func Load() *Config {
 	return &Config{
 		Port:   envInt("GITWISE_PORT", 3000),
@@ -67,6 +72,9 @@ func Load() *Config {
 		},
 		Git: GitConfig{
 			ReposPath: envStr("GITWISE_REPOS_PATH", "./data/repos"),
+		},
+		Frontend: FrontendConfig{
+			DistPath: envStr("GITWISE_FRONTEND_DIST", "./web/dist"),
 		},
 	}
 }
