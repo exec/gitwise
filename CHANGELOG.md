@@ -1,5 +1,40 @@
 # Changelog
 
+## Phase 1 — Security Hardening (2026-04-04)
+
+Four code review passes identified and fixed ~30 issues across the full stack.
+
+### Security Fixes
+
+- **Path traversal** in git HTTP handler, git SSH handler, and SPA static file server — all three entry points now validate path components and verify resolved paths stay within their root directory
+- **Command injection** via `?service=` query parameter — git service names whitelisted to exactly `upload-pack` and `receive-pack`
+- **Private repo visibility** — `GetByOwnerAndName` and `ListByOwner` now enforce visibility based on the authenticated viewer; private repos return 404 for non-owners
+- **CORS misconfiguration** — replaced `Access-Control-Allow-Origin: *` with reflected Origin (wildcard + credentials is invalid per spec)
+- **Request body size limit** — all JSON endpoints capped at 1MB via `MaxBytesReader`; oversized requests return 413
+- **Branch name validation** — repo create and update validate `default_branch` against a safe regex, preventing refspec injection in `AutoInit`
+- **Session cookie validation** — reject non-hex or wrong-length session IDs before Redis lookup
+- **Ref resolution restricted** — `ResolveRef` only accepts branches, tags, and 40-char hex SHAs; arbitrary revision syntax (`HEAD~3`, `^`, `@{}`) rejected
+- **Password max length** — capped at 128 chars to prevent argon2id DoS
+- **Docker** — container runs as non-root `gitwise` user; Postgres/Redis ports bound to `127.0.0.1`
+
+### Bug Fixes
+
+- **`owner_name` field mismatch** — frontend used `owner` but API returns `owner_name`; fixed in DashboardPage, NewRepoPage, RepoPage
+- **`[object Object]` error display** — API errors are `{code, message}` objects, not strings; fixed `api.ts` type and all error render sites
+- **`repo.Update` returned empty `owner_name`** — RETURNING clause didn't join users table; added subquery
+- **`AutoInit` silent failure** — rewrote from shell-out to go-git library calls; errors now logged
+- **Frontend query race** — tree/blob/commit queries fired with hardcoded `"main"` before repo metadata loaded; gated on `repoLoaded`
+- **Blob view fell through to tree** — added explicit loading/error states
+- **Logout resilience** — store clears auth state unconditionally; Layout catches errors and clears query cache
+- **`res.json()` crash on non-JSON responses** — wrapped in try/catch
+- **Git HTTP streaming** — `cmd.Output()` buffered entire repo in memory; now streams `cmd.Stdout` directly to `ResponseWriter`
+- **`rows.Err()` missing** — added after all row iteration loops
+- **`Sscanf` unchecked** — password verification now checks parse return value
+- **`repo.Update` validation** — visibility and default_branch now validated (matching Create)
+- **Commit ref URL-encoding** — `encodeURIComponent` on ref query parameter
+
+---
+
 ## Phase 1 — Core Platform (2026-04-04)
 
 The foundational layer: a functional self-hosted Git platform with authentication,
