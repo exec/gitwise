@@ -21,15 +21,18 @@ import (
 	"github.com/gitwise-io/gitwise/internal/config"
 	"github.com/gitwise-io/gitwise/internal/git"
 	"github.com/gitwise-io/gitwise/internal/middleware"
+	"github.com/gitwise-io/gitwise/internal/services/activity"
 	"github.com/gitwise-io/gitwise/internal/services/comment"
 	"github.com/gitwise-io/gitwise/internal/services/issue"
 	"github.com/gitwise-io/gitwise/internal/services/label"
 	"github.com/gitwise-io/gitwise/internal/services/milestone"
 	"github.com/gitwise-io/gitwise/internal/services/notification"
+	"github.com/gitwise-io/gitwise/internal/services/org"
 	"github.com/gitwise-io/gitwise/internal/services/protection"
 	"github.com/gitwise-io/gitwise/internal/services/pull"
 	"github.com/gitwise-io/gitwise/internal/services/repo"
 	"github.com/gitwise-io/gitwise/internal/services/review"
+	"github.com/gitwise-io/gitwise/internal/services/search"
 	"github.com/gitwise-io/gitwise/internal/services/user"
 	gitwisews "github.com/gitwise-io/gitwise/internal/websocket"
 )
@@ -53,6 +56,9 @@ type Server struct {
 	milestoneSvc  *milestone.Service
 	notifSvc      *notification.Service
 	protectionSvc *protection.Service
+	activitySvc   *activity.Service
+	searchSvc     *search.Service
+	orgSvc        *org.Service
 
 	// WebSocket
 	wsHub *gitwisews.Hub
@@ -72,6 +78,9 @@ type Server struct {
 	notifHandler      *handlers.NotificationHandler
 	protectionHandler *handlers.ProtectionHandler
 	profileHandler    *handlers.ProfileHandler
+	activityHandler   *handlers.ActivityHandler
+	searchHandler     *handlers.SearchHandler
+	orgHandler        *handlers.OrgHandler
 
 	// Git protocol
 	gitHTTP *git.HTTPHandler
@@ -111,11 +120,14 @@ func (s *Server) initServices() {
 	s.labelSvc = label.NewService(s.db)
 	s.milestoneSvc = milestone.NewService(s.db)
 
-	// Notification service
-	s.notifSvc = notification.NewService(s.db)
-
-	// WebSocket hub
+	// WebSocket hub (created before notification service for real-time push)
 	s.wsHub = gitwisews.NewHub()
+
+	// Notification service (wired to WebSocket hub)
+	s.notifSvc = notification.NewService(s.db, s.wsHub)
+
+	// Activity service
+	s.activitySvc = activity.NewService(s.db)
 
 	// Handlers
 	s.authHandler = handlers.NewAuthHandler(s.userSvc, s.sessions)
@@ -128,6 +140,11 @@ func (s *Server) initServices() {
 	s.notifHandler = handlers.NewNotificationHandler(s.notifSvc)
 	s.protectionHandler = handlers.NewProtectionHandler(s.repoSvc, s.protectionSvc)
 	s.profileHandler = handlers.NewProfileHandler(s.userSvc)
+	s.activityHandler = handlers.NewActivityHandler(s.repoSvc, s.activitySvc, s.userSvc)
+
+	// Search service
+	s.searchSvc = search.NewService(s.db, s.gitSvc)
+	s.searchHandler = handlers.NewSearchHandler(s.searchSvc, s.repoSvc)
 
 	// Git HTTP protocol
 	s.gitHTTP = git.NewHTTPHandler(s.gitSvc, func(username, password string) (string, bool) {
@@ -237,6 +254,9 @@ func (s *Server) setupRoutes() {
 				r.With(middleware.RequireAuth).Patch("/milestones/{milestoneID}", s.milestoneHandler.Update)
 				r.With(middleware.RequireAuth).Delete("/milestones/{milestoneID}", s.milestoneHandler.Delete)
 
+				// Activity feed
+				r.Get("/activity", s.activityHandler.ListByRepo)
+
 				// Branch protection
 				r.Get("/branch-protection", s.protectionHandler.List)
 				r.With(middleware.RequireAuth).Post("/branch-protection", s.protectionHandler.Create)
@@ -258,7 +278,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/users/{username}/repos", s.handleListUserRepos)
 		r.Get("/users/{username}/contributions", s.profileHandler.GetContributions)
 		r.Get("/users/{username}/pinned-repos", s.profileHandler.ListPinnedRepos)
-		r.Get("/users/{username}/activity", s.profileHandler.GetActivity)
+		r.Get("/users/{username}/activity", s.activityHandler.ListByUser)
 
 		// Authenticated profile actions
 		r.With(middleware.RequireAuth).Patch("/user/profile", s.profileHandler.UpdateProfile)
