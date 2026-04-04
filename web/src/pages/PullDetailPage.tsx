@@ -31,7 +31,10 @@ interface PullRequest {
   review_summary: {
     approved_by?: string[];
     changes_requested_by?: string[];
+    reviews_count?: number;
     comments_count?: number;
+    threads_resolved?: number;
+    threads_unresolved?: number;
   };
   merged_by_name?: string;
   merged_at?: string;
@@ -290,6 +293,17 @@ export default function PullDetailPage() {
               {pr.review_summary.changes_requested_by.join(", ")}
             </div>
           )}
+        {pr.review_summary.threads_unresolved != null && pr.review_summary.threads_unresolved > 0 && (
+          <div className="review-status changes-requested">
+            {pr.review_summary.threads_unresolved} unresolved thread{pr.review_summary.threads_unresolved !== 1 ? 's' : ''}
+            {pr.review_summary.threads_resolved ? ` (${pr.review_summary.threads_resolved} resolved)` : ''}
+          </div>
+        )}
+        {pr.review_summary.threads_unresolved === 0 && pr.review_summary.threads_resolved != null && pr.review_summary.threads_resolved > 0 && (
+          <div className="review-status approved">
+            All {pr.review_summary.threads_resolved} thread{pr.review_summary.threads_resolved !== 1 ? 's' : ''} resolved
+          </div>
+        )}
 
         <div className="tab-nav">
           <button
