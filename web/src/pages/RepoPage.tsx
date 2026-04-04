@@ -103,7 +103,7 @@ export default function RepoPage() {
   const commitsQuery = useQuery({
     queryKey: ["commits", owner, repo, currentRef],
     queryFn: () =>
-      get<Commit[]>(`/repos/${owner}/${repo}/commits?ref=${currentRef}`).then(
+      get<Commit[]>(`/repos/${owner}/${repo}/commits?ref=${encodeURIComponent(currentRef)}`).then(
         (r) => r.data,
       ),
     enabled: !!owner && !!repo && repoLoaded && tab === "commits",

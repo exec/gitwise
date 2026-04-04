@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	gitpkg "github.com/gitwise-io/gitwise/internal/git"
+	"github.com/gitwise-io/gitwise/internal/middleware"
 	"github.com/gitwise-io/gitwise/internal/models"
 	"github.com/gitwise-io/gitwise/internal/services/repo"
 )
@@ -28,7 +29,7 @@ func (h *BrowseHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 	treePath := chi.URLParam(r, "*")
 
 	// Verify repo exists
-	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName)
+	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName, middleware.GetUserID(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "repository not found")
 		return
@@ -57,7 +58,7 @@ func (h *BrowseHandler) GetBlob(w http.ResponseWriter, r *http.Request) {
 	ref := chi.URLParam(r, "ref")
 	filePath := chi.URLParam(r, "*")
 
-	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName)
+	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName, middleware.GetUserID(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "repository not found")
 		return
@@ -86,7 +87,7 @@ func (h *BrowseHandler) GetRawBlob(w http.ResponseWriter, r *http.Request) {
 	ref := chi.URLParam(r, "ref")
 	filePath := chi.URLParam(r, "*")
 
-	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName)
+	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName, middleware.GetUserID(r.Context()))
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -111,7 +112,7 @@ func (h *BrowseHandler) ListCommits(w http.ResponseWriter, r *http.Request) {
 	owner := chi.URLParam(r, "owner")
 	repoName := chi.URLParam(r, "repo")
 
-	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName)
+	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName, middleware.GetUserID(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "repository not found")
 		return
@@ -151,7 +152,7 @@ func (h *BrowseHandler) GetCommit(w http.ResponseWriter, r *http.Request) {
 	repoName := chi.URLParam(r, "repo")
 	sha := chi.URLParam(r, "sha")
 
-	_, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName)
+	_, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName, middleware.GetUserID(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "repository not found")
 		return
@@ -170,7 +171,7 @@ func (h *BrowseHandler) ListBranches(w http.ResponseWriter, r *http.Request) {
 	owner := chi.URLParam(r, "owner")
 	repoName := chi.URLParam(r, "repo")
 
-	_, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName)
+	_, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName, middleware.GetUserID(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "repository not found")
 		return

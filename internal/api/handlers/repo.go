@@ -52,8 +52,9 @@ func (h *RepoHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *RepoHandler) Get(w http.ResponseWriter, r *http.Request) {
 	owner := chi.URLParam(r, "owner")
 	repoName := chi.URLParam(r, "repo")
+	viewerID := middleware.GetUserID(r.Context())
 
-	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName)
+	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName, viewerID)
 	if errors.Is(err, repo.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "repository not found")
 		return
@@ -68,9 +69,10 @@ func (h *RepoHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *RepoHandler) ListByOwner(w http.ResponseWriter, r *http.Request) {
 	owner := chi.URLParam(r, "owner")
+	viewerID := middleware.GetUserID(r.Context())
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 
-	repos, err := h.repos.ListByOwner(r.Context(), owner, limit)
+	repos, err := h.repos.ListByOwner(r.Context(), owner, viewerID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to list repositories")
 		return
@@ -106,7 +108,7 @@ func (h *RepoHandler) Update(w http.ResponseWriter, r *http.Request) {
 	owner := chi.URLParam(r, "owner")
 	repoName := chi.URLParam(r, "repo")
 
-	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName)
+	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName, userID)
 	if errors.Is(err, repo.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "repository not found")
 		return
@@ -145,7 +147,7 @@ func (h *RepoHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	owner := chi.URLParam(r, "owner")
 	repoName := chi.URLParam(r, "repo")
 
-	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName)
+	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName, userID)
 	if errors.Is(err, repo.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "repository not found")
 		return

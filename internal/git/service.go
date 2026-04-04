@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -35,6 +36,8 @@ func (s *Service) RepoPath(owner, name string) string {
 
 // ValidatePath checks that owner and repo name are safe path components
 // with no traversal (../, /, or null bytes).
+// Note: Go's net/http URL-decodes paths before handlers see them, and SSH
+// clients don't URL-encode, so checking literal characters is sufficient.
 func ValidatePath(parts ...string) error {
 	for _, p := range parts {
 		if p == "" || p == "." || p == ".." ||
@@ -43,6 +46,24 @@ func ValidatePath(parts ...string) error {
 			strings.ContainsRune(p, 0) {
 			return fmt.Errorf("invalid path component: %q", p)
 		}
+	}
+	return nil
+}
+
+var branchNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,253}[a-zA-Z0-9]$`)
+
+// ValidateBranchName checks that a branch name is safe for use in refspecs.
+func ValidateBranchName(name string) error {
+	if len(name) < 1 || len(name) > 255 {
+		return fmt.Errorf("branch name must be 1-255 characters")
+	}
+	if strings.Contains(name, "..") || strings.Contains(name, "~") ||
+		strings.Contains(name, "^") || strings.Contains(name, ":") ||
+		strings.Contains(name, " ") || strings.ContainsRune(name, 0) {
+		return fmt.Errorf("branch name contains invalid characters")
+	}
+	if !branchNameRe.MatchString(name) {
+		return fmt.Errorf("branch name contains invalid characters")
 	}
 	return nil
 }

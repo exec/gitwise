@@ -67,6 +67,11 @@ func (sm *SessionManager) Get(ctx context.Context, r *http.Request) (*SessionDat
 		return nil, "", nil
 	}
 
+	// Validate cookie is a 64-char hex string (matching what Create generates)
+	if len(cookie.Value) != 64 || !isHex(cookie.Value) {
+		return nil, "", nil
+	}
+
 	val, err := sm.redis.Get(ctx, sessionPrefix+cookie.Value).Result()
 	if err == redis.Nil {
 		return nil, "", nil
@@ -93,4 +98,13 @@ func (sm *SessionManager) Destroy(ctx context.Context, w http.ResponseWriter, se
 		HttpOnly: true,
 	})
 	return nil
+}
+
+func isHex(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }

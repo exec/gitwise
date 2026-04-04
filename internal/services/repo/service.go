@@ -47,6 +47,10 @@ func (s *Service) Create(ctx context.Context, ownerID uuid.UUID, req models.Crea
 	if req.DefaultBranch == "" {
 		req.DefaultBranch = "main"
 	}
+	// Validate branch name: alphanumeric, hyphens, dots, slashes, underscores only
+	if err := git.ValidateBranchName(req.DefaultBranch); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidName, err)
+	}
 
 	// Look up owner username
 	var ownerName string
@@ -102,7 +106,10 @@ func (s *Service) Create(ctx context.Context, ownerID uuid.UUID, req models.Crea
 	return repo, nil
 }
 
-func (s *Service) GetByOwnerAndName(ctx context.Context, owner, name string) (*models.Repository, error) {
+// GetByOwnerAndName returns a repository. If viewerID is nil (unauthenticated),
+// only public repos are returned. If viewerID is set, the repo is returned if
+// public or if the viewer is the owner.
+func (s *Service) GetByOwnerAndName(ctx context.Context, owner, name string, viewerID *uuid.UUID) (*models.Repository, error) {
 	repo := &models.Repository{}
 	err := s.db.QueryRow(ctx, `
 		SELECT r.id, r.owner_id, u.username, r.name, r.description, r.default_branch,
@@ -122,24 +129,42 @@ func (s *Service) GetByOwnerAndName(ctx context.Context, owner, name string) (*m
 	if err != nil {
 		return nil, fmt.Errorf("query repo: %w", err)
 	}
+
+	// Enforce visibility: private repos only visible to the owner
+	if repo.Visibility == "private" {
+		if viewerID == nil || *viewerID != repo.OwnerID {
+			return nil, ErrNotFound
+		}
+	}
+
 	return repo, nil
 }
 
-func (s *Service) ListByOwner(ctx context.Context, owner string, limit int) ([]models.Repository, error) {
+// ListByOwner returns repos for a user. viewerID controls visibility filtering:
+// nil = only public repos, set = public + viewer's own private repos.
+func (s *Service) ListByOwner(ctx context.Context, owner string, viewerID *uuid.UUID, limit int) ([]models.Repository, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
 
-	rows, err := s.db.Query(ctx, `
+	// Show private repos only if the viewer is the owner
+	query := `
 		SELECT r.id, r.owner_id, u.username, r.name, r.description, r.default_branch,
 		       r.visibility, r.language_stats, r.topics, r.stars_count, r.forks_count,
 		       r.created_at, r.updated_at
 		FROM repositories r
 		JOIN users u ON u.id = r.owner_id
 		WHERE u.username = $1
+		  AND (r.visibility = 'public' OR r.owner_id = $2)
 		ORDER BY r.updated_at DESC
-		LIMIT $2`, strings.ToLower(owner), limit,
-	)
+		LIMIT $3`
+
+	var viewerUUID uuid.UUID
+	if viewerID != nil {
+		viewerUUID = *viewerID
+	}
+
+	rows, err := s.db.Query(ctx, query, strings.ToLower(owner), viewerUUID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query repos: %w", err)
 	}

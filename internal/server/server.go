@@ -211,7 +211,7 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListUserRepos(w http.ResponseWriter, r *http.Request) {
 	owner := chi.URLParam(r, "username")
-	repos, err := s.repoSvc.ListByOwner(r.Context(), owner, 100)
+	repos, err := s.repoSvc.ListByOwner(r.Context(), owner, middleware.GetUserID(r.Context()), 100)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
