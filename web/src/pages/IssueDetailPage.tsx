@@ -14,6 +14,7 @@ interface Issue {
   body: string;
   status: string;
   labels: string[];
+  assignees: string[];
   priority: string;
   created_at: string;
   updated_at: string;
@@ -117,6 +118,15 @@ export default function IssueDetailPage() {
                 {l}
               </span>
             ))}
+          </div>
+        )}
+
+        {issue.assignees && issue.assignees.length > 0 && (
+          <div className="issue-assignees">
+            <span className="muted">
+              {issue.assignees.length} assignee
+              {issue.assignees.length !== 1 ? "s" : ""}
+            </span>
           </div>
         )}
 
