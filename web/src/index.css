@@ -655,6 +655,79 @@ input:disabled {
   color: var(--success);
 }
 
+/* ---- Setup instructions (empty repo) ---- */
+
+.setup-instructions {
+  margin-top: 8px;
+}
+
+.setup-quick {
+  margin-bottom: 24px;
+}
+
+.setup-quick h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.setup-clone-url {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setup-url-input {
+  flex: 1;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  outline: none;
+}
+
+.setup-url-input:focus {
+  border-color: var(--accent);
+}
+
+.setup-section {
+  margin-bottom: 24px;
+}
+
+.setup-section h3 {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+.setup-code-block {
+  position: relative;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.setup-code-block pre {
+  margin: 0;
+  padding: 16px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+
+.setup-code-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
 /* ---- Commits ---- */
 
 .commit-list {
@@ -1709,13 +1782,11 @@ button.tab {
 .search-bar-icon {
   position: absolute;
   left: 10px;
-  top: 50%;
-  transform: translateY(-50%);
   color: var(--text-muted);
   pointer-events: none;
 }
 
-input.search-bar-input {
+.search-bar-input {
   width: 100%;
   padding: 6px 10px 6px 32px;
   font-size: 0.8125rem;
