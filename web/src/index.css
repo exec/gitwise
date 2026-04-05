@@ -2655,41 +2655,10 @@ input.search-bar-input {
 
 /* ---- Settings page ---- */
 
-.settings-page {
-  max-width: 700px;
-}
-
-.settings-page h2 {
-  font-size: 1.5rem;
-  margin-bottom: 16px;
-}
-
-.settings-page h3 {
-  font-size: 1.125rem;
-  font-weight: 600;
-}
-
-.settings-page h4 {
-  font-size: 0.9375rem;
-  font-weight: 600;
-}
-
-.settings-card {
-  padding: 16px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-}
-
 .scope-checkboxes {
   display: flex;
   flex-wrap: wrap;
   gap: 12px 20px;
-}
-
-.danger-zone h4 {
-  color: var(--danger);
-  margin-bottom: 8px;
 }
 
 /* ---- Token list ---- */
@@ -2702,14 +2671,17 @@ input.search-bar-input {
 
 .token-list th {
   text-align: left;
-  padding: 8px 12px;
+  padding: 10px 20px;
   font-weight: 600;
-  color: var(--text-secondary);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
   border-bottom: 1px solid var(--border);
 }
 
 .token-list td {
-  padding: 10px 12px;
+  padding: 12px 20px;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
@@ -2795,6 +2767,13 @@ input.search-bar-input {
   background: var(--bg-tertiary);
   color: var(--text-primary);
   font-weight: 600;
+}
+
+a.settings-tab-link {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+  margin-bottom: 4px;
 }
 
 .settings-content {

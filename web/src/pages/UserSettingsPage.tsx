@@ -37,39 +37,36 @@ function formatDate(dateStr: string | null): string {
 }
 
 export default function UserSettingsPage() {
-  const [activeTab, setActiveTab] = useState<"profile" | "tokens" | "account">("tokens");
+  const [activeTab, setActiveTab] = useState<"tokens" | "account">("tokens");
   const navigate = useNavigate();
-
-  if (activeTab === "profile") {
-    navigate("/settings/profile");
-  }
 
   return (
     <div className="settings-page">
-      <h2>Settings</h2>
-      <div className="tab-nav">
-        <button
-          className={`tab ${activeTab === "profile" ? "tab-active" : ""}`}
-          onClick={() => setActiveTab("profile")}
-        >
+      <nav className="settings-sidebar">
+        <a href="/settings/profile" className="settings-tab settings-tab-link" onClick={(e) => { e.preventDefault(); navigate("/settings/profile"); }}>
           Profile
-        </button>
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style={{ marginLeft: 4, opacity: 0.5, flexShrink: 0 }}>
+            <path d="M3.75 2a.75.75 0 0 0 0 1.5h6.69L2.72 11.22a.75.75 0 1 0 1.06 1.06L11.5 4.56v6.69a.75.75 0 0 0 1.5 0V2.75a.75.75 0 0 0-.75-.75H3.75Z" />
+          </svg>
+        </a>
         <button
-          className={`tab ${activeTab === "tokens" ? "tab-active" : ""}`}
+          className={`settings-tab ${activeTab === "tokens" ? "active" : ""}`}
           onClick={() => setActiveTab("tokens")}
         >
           API Tokens
         </button>
         <button
-          className={`tab ${activeTab === "account" ? "tab-active" : ""}`}
+          className={`settings-tab ${activeTab === "account" ? "active" : ""}`}
           onClick={() => setActiveTab("account")}
         >
           Account
         </button>
-      </div>
+      </nav>
 
-      {activeTab === "tokens" && <TokensTab />}
-      {activeTab === "account" && <AccountTab />}
+      <div className="settings-content">
+        {activeTab === "tokens" && <TokensTab />}
+        {activeTab === "account" && <AccountTab />}
+      </div>
     </div>
   );
 }
@@ -159,8 +156,8 @@ function TokensTab() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <h3>API Tokens</h3>
+      <div className="settings-header">
+        <h2>API Tokens</h2>
         <button className="btn btn-primary btn-sm" onClick={() => { setShowCreate(true); setNewTokenValue(null); }}>
           New token
         </button>
@@ -179,8 +176,8 @@ function TokensTab() {
       )}
 
       {showCreate && (
-        <div className="settings-card" style={{ marginBottom: 16 }}>
-          <h4 style={{ marginBottom: 12 }}>Create new token</h4>
+        <div className="settings-form-card">
+          <h3>Create new token</h3>
           {createError && <div className="error-banner">{createError}</div>}
           <form onSubmit={handleCreateSubmit}>
             <div className="form-group">
@@ -233,60 +230,64 @@ function TokensTab() {
       {isLoading ? (
         <p className="muted">Loading tokens...</p>
       ) : tokens && tokens.length > 0 ? (
-        <table className="token-list">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Scopes</th>
-              <th>Created</th>
-              <th>Last used</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {tokens.map((token) => (
-              <tr key={token.id}>
-                <td>{token.name}</td>
-                <td>
-                  <span className="token-scopes">
-                    {token.scopes?.join(", ") || "none"}
-                  </span>
-                </td>
-                <td>{formatDate(token.created_at)}</td>
-                <td>{formatDate(token.last_used)}</td>
-                <td>
-                  {deleteConfirm === token.id ? (
-                    <span style={{ display: "flex", gap: 4 }}>
-                      <button
-                        className="btn btn-sm"
-                        style={{ background: "var(--danger)", color: "#fff", borderColor: "var(--danger)" }}
-                        onClick={() => deleteMutation.mutate(token.id)}
-                        disabled={deleteMutation.isPending}
-                      >
-                        Confirm
-                      </button>
+        <div className="settings-form-card" style={{ padding: 0 }}>
+          <table className="token-list">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Scopes</th>
+                <th>Created</th>
+                <th>Last used</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {tokens.map((token) => (
+                <tr key={token.id}>
+                  <td><strong>{token.name}</strong></td>
+                  <td>
+                    <span className="token-scopes">
+                      {token.scopes?.join(", ") || "none"}
+                    </span>
+                  </td>
+                  <td>{formatDate(token.created_at)}</td>
+                  <td>{formatDate(token.last_used)}</td>
+                  <td>
+                    {deleteConfirm === token.id ? (
+                      <span style={{ display: "flex", gap: 4 }}>
+                        <button
+                          className="btn btn-sm"
+                          style={{ background: "var(--danger)", color: "#fff", borderColor: "var(--danger)" }}
+                          onClick={() => deleteMutation.mutate(token.id)}
+                          disabled={deleteMutation.isPending}
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => setDeleteConfirm(null)}
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
                       <button
                         className="btn btn-secondary btn-sm"
-                        onClick={() => setDeleteConfirm(null)}
+                        onClick={() => setDeleteConfirm(token.id)}
                       >
-                        Cancel
+                        Delete
                       </button>
-                    </span>
-                  ) : (
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => setDeleteConfirm(token.id)}
-                    >
-                      Delete
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : (
-        <p className="muted">No API tokens yet.</p>
+        <div className="settings-form-card">
+          <p className="muted" style={{ margin: 0 }}>No API tokens yet. Create one to authenticate with the API.</p>
+        </div>
       )}
     </div>
   );
@@ -297,8 +298,8 @@ function AccountTab() {
 
   return (
     <div>
-      <h3 style={{ marginBottom: 16 }}>Account</h3>
-      <div className="settings-card">
+      <h2>Account</h2>
+      <div className="settings-form-card">
         <div className="form-group">
           <label>Username</label>
           <input type="text" value={user?.username || ""} disabled />
@@ -307,26 +308,24 @@ function AccountTab() {
           <label>Email</label>
           <input type="text" value={user?.email || ""} disabled />
         </div>
-        <div className="form-group">
+        <div className="form-group" style={{ marginBottom: 0 }}>
           <label>Account created</label>
           <input type="text" value={user?.created_at ? formatDate(user.created_at) : ""} disabled />
         </div>
       </div>
 
-      <div className="danger-zone" style={{ marginTop: 24 }}>
-        <h4>Danger zone</h4>
-        <div className="settings-card" style={{ borderColor: "var(--danger)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <strong>Delete account</strong>
-              <p className="muted" style={{ fontSize: "0.8125rem" }}>
-                Permanently delete your account and all associated data.
-              </p>
-            </div>
-            <button className="btn btn-sm" style={{ background: "var(--danger)", color: "#fff", borderColor: "var(--danger)" }} disabled>
-              Coming soon
-            </button>
+      <div className="danger-zone">
+        <h3>Danger zone</h3>
+        <div className="danger-zone-item">
+          <div>
+            <strong>Delete account</strong>
+            <p className="muted">
+              Permanently delete your account and all associated data.
+            </p>
           </div>
+          <button className="btn btn-sm" style={{ background: "var(--danger)", color: "#fff", borderColor: "var(--danger)" }} disabled>
+            Coming soon
+          </button>
         </div>
       </div>
     </div>
