@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gitwise-io/gitwise/internal/middleware"
 	"github.com/gitwise-io/gitwise/internal/services/repo"
 	"github.com/gitwise-io/gitwise/internal/services/search"
+
+	"github.com/google/uuid"
 )
 
 type SearchHandler struct {
@@ -19,8 +22,26 @@ func NewSearchHandler(searchSvc *search.Service, repoSvc *repo.Service) *SearchH
 
 func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 	var req search.SearchRequest
-	if handleDecodeError(w, decodeJSON(r, &req)) {
-		return
+
+	if r.Method == http.MethodGet {
+		req.Query = r.URL.Query().Get("q")
+		req.Scope = r.URL.Query().Get("scope")
+		req.Language = r.URL.Query().Get("language")
+		if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil {
+			req.Limit = l
+		}
+		if o, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil {
+			req.Offset = o
+		}
+		if repoIDStr := r.URL.Query().Get("repo_id"); repoIDStr != "" {
+			if id, err := uuid.Parse(repoIDStr); err == nil {
+				req.RepoID = &id
+			}
+		}
+	} else {
+		if handleDecodeError(w, decodeJSON(r, &req)) {
+			return
+		}
 	}
 
 	if req.Query == "" {

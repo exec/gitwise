@@ -20,6 +20,28 @@ func NewRepoHandler(repos *repo.Service) *RepoHandler {
 	return &RepoHandler{repos: repos}
 }
 
+func (h *RepoHandler) List(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+
+	if userID != nil {
+		repos, err := h.repos.ListForUser(r.Context(), *userID, limit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "server_error", "failed to list repositories")
+			return
+		}
+		writeJSON(w, http.StatusOK, repos)
+		return
+	}
+
+	repos, err := h.repos.ListPublic(r.Context(), limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "failed to list repositories")
+		return
+	}
+	writeJSON(w, http.StatusOK, repos)
+}
+
 func (h *RepoHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r.Context())
 	if userID == nil {

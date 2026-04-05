@@ -226,6 +226,44 @@ func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID, limit int) 
 	return repos, nil
 }
 
+func (s *Service) ListPublic(ctx context.Context, limit int) ([]models.Repository, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 30
+	}
+
+	rows, err := s.db.Query(ctx, `
+		SELECT r.id, r.owner_id, u.username, r.name, r.description, r.default_branch,
+		       r.visibility, r.language_stats, r.topics, r.stars_count, r.forks_count,
+		       r.created_at, r.updated_at
+		FROM repositories r
+		JOIN users u ON u.id = r.owner_id
+		WHERE r.visibility = 'public'
+		ORDER BY r.updated_at DESC
+		LIMIT $1`, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query repos: %w", err)
+	}
+	defer rows.Close()
+
+	var repos []models.Repository
+	for rows.Next() {
+		var r models.Repository
+		if err := rows.Scan(
+			&r.ID, &r.OwnerID, &r.OwnerName, &r.Name, &r.Description,
+			&r.DefaultBranch, &r.Visibility, &r.LanguageStats, &r.Topics,
+			&r.StarsCount, &r.ForksCount, &r.CreatedAt, &r.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan repo: %w", err)
+		}
+		repos = append(repos, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate repos: %w", err)
+	}
+	return repos, nil
+}
+
 func (s *Service) Update(ctx context.Context, repoID uuid.UUID, req models.UpdateRepoRequest) (*models.Repository, error) {
 	setClauses := []string{"updated_at = now()"}
 	args := []any{repoID}

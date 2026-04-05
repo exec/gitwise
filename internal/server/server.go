@@ -189,6 +189,7 @@ func (s *Server) setupMiddleware() {
 	s.router.Use(chimw.Logger)
 	s.router.Use(chimw.Recoverer)
 	s.router.Use(corsMiddleware)
+	s.router.Use(middleware.MaxBodySize(1 << 20)) // 1 MB body limit
 	s.router.Use(s.auth.Handler)
 }
 
@@ -220,6 +221,7 @@ func (s *Server) setupRoutes() {
 
 		// Repository operations
 		r.Route("/repos", func(r chi.Router) {
+			r.Get("/", s.repoHandler.List)
 			r.With(middleware.RequireAuth).Post("/", s.repoHandler.Create)
 
 			r.Route("/{owner}/{repo}", func(r chi.Router) {
@@ -327,6 +329,7 @@ func (s *Server) setupRoutes() {
 		})
 
 		// Search
+		r.Get("/search", s.searchHandler.Search)
 		r.Post("/search", s.searchHandler.Search)
 		r.With(middleware.RequireAuth).Post("/search/code/index", s.searchHandler.IndexRepo)
 	})
