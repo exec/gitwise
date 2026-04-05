@@ -2,6 +2,7 @@ import { useParams, useLocation, Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { get } from "../lib/api";
 import RepoHeader from "../components/RepoHeader";
+import CodeView from "../components/CodeView";
 
 interface Repo {
   id: string;
@@ -177,9 +178,9 @@ export default function RepoPage() {
                     {formatSize(blobQuery.data.size)}
                   </span>
                 </div>
-                <pre className="file-content">
-                  <code>{blobQuery.data.content}</code>
-                </pre>
+                <div className="file-content">
+                  <CodeView code={blobQuery.data.content} filename={treePath} />
+                </div>
               </div>
             ) : null
           ) : (

@@ -539,7 +539,6 @@ input:disabled {
 }
 
 .file-content {
-  padding: 16px;
   margin: 0;
   overflow-x: auto;
   font-family: var(--font-mono);
@@ -548,6 +547,112 @@ input:disabled {
   background: var(--bg-primary);
   color: var(--text-primary);
   tab-size: 4;
+}
+
+/* ---- Code viewer (Prism syntax highlighting) ---- */
+
+.code-view-container {
+  overflow-x: auto;
+}
+
+.code-view-table {
+  border-collapse: collapse;
+  width: 100%;
+  border-spacing: 0;
+}
+
+.code-view-line:hover {
+  background: var(--bg-tertiary);
+}
+
+.code-view-ln {
+  position: sticky;
+  left: 0;
+  width: 1%;
+  min-width: 48px;
+  padding: 0 12px 0 16px;
+  text-align: right;
+  color: var(--text-muted);
+  user-select: none;
+  -webkit-user-select: none;
+  background: var(--bg-primary);
+  border-right: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+  vertical-align: top;
+}
+
+.code-view-code {
+  padding: 0 16px;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+/* Prism token colors mapped to app theme variables */
+
+.token.comment,
+.token.prolog,
+.token.doctype,
+.token.cdata {
+  color: var(--hl-comment);
+  font-style: italic;
+}
+
+.token.keyword,
+.token.tag,
+.token.boolean,
+.token.important,
+.token.builtin {
+  color: var(--hl-keyword);
+}
+
+.token.string,
+.token.char,
+.token.attr-value,
+.token.regex,
+.token.template-string {
+  color: var(--hl-string);
+}
+
+.token.number {
+  color: var(--hl-number);
+}
+
+.token.function,
+.token.function-variable {
+  color: var(--hl-function);
+}
+
+.token.operator,
+.token.entity,
+.token.url,
+.token.variable {
+  color: var(--hl-operator);
+}
+
+.token.class-name,
+.token.type-hint,
+.token.namespace,
+.token.attr-name {
+  color: var(--hl-type);
+}
+
+.token.punctuation {
+  color: var(--text-secondary);
+}
+
+.token.property,
+.token.constant,
+.token.symbol {
+  color: var(--hl-number);
+}
+
+.token.deleted {
+  color: var(--danger);
+}
+
+.token.inserted {
+  color: var(--success);
 }
 
 /* ---- Commits ---- */
