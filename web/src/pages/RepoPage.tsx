@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useParams, useLocation, Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
 import { get } from "../lib/api";
 import RepoHeader from "../components/RepoHeader";
 import CodeView from "../components/CodeView";
+import Markdown from "../components/Markdown";
 
 interface Repo {
   id: string;
@@ -56,6 +56,23 @@ function detectView(pathname: string): "tree" | "blob" | "root" {
   if (pathname.includes("/blob/")) return "blob";
   if (pathname.includes("/tree/")) return "tree";
   return "root";
+}
+
+const README_NAMES = ["readme.md", "readme.markdown", "readme.rst", "readme.txt", "readme"];
+
+function findReadme(entries: TreeEntry[]): TreeEntry | undefined {
+  for (const name of README_NAMES) {
+    const match = entries.find(
+      (e) => e.type === "blob" && e.name.toLowerCase() === name,
+    );
+    if (match) return match;
+  }
+  return undefined;
+}
+
+function isMarkdownFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower.endsWith(".md") || lower.endsWith(".markdown");
 }
 
 export default function RepoPage() {
@@ -110,6 +127,22 @@ export default function RepoPage() {
         (r) => r.data,
       ),
     enabled: !!owner && !!repo && repoLoaded && tab === "commits",
+  });
+
+  const readmeEntry = treeQuery.data ? findReadme(treeQuery.data) : undefined;
+  const readmePath = readmeEntry
+    ? treePath
+      ? `${treePath}/${readmeEntry.name}`
+      : readmeEntry.name
+    : "";
+
+  const readmeQuery = useQuery({
+    queryKey: ["readme", owner, repo, currentRef, readmePath],
+    queryFn: () =>
+      get<Blob>(
+        `/repos/${owner}/${repo}/blob/${currentRef}/${readmePath}`,
+      ).then((r) => r.data),
+    enabled: !!readmeEntry && !!owner && !!repo && view !== "blob",
   });
 
   if (repoQuery.isLoading) {
@@ -246,6 +279,23 @@ export default function RepoPage() {
                     })}
                   </tbody>
                 </table>
+              )}
+              {readmeQuery.data && readmeEntry && (
+                <div className="readme-container">
+                  <div className="readme-header">
+                    <svg className="readme-icon" viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                      <path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.744 3.744 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Zm7.251 10.324.004-5.073-.002-2.253A2.25 2.25 0 0 0 5.003 2.5H1.5v9h3.757a3.75 3.75 0 0 1 1.994.574ZM8.755 4.75l-.004 7.322a3.752 3.752 0 0 1 1.992-.572H14.5v-9h-3.495a2.25 2.25 0 0 0-2.25 2.25Z"></path>
+                    </svg>
+                    <span>{readmeEntry.name}</span>
+                  </div>
+                  <div className="readme-content">
+                    {isMarkdownFile(readmeEntry.name) ? (
+                      <Markdown content={readmeQuery.data.content} />
+                    ) : (
+                      <pre className="readme-plain">{readmeQuery.data.content}</pre>
+                    )}
+                  </div>
+                </div>
               )}
             </>
           )}
