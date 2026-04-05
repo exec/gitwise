@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import Prism from "prismjs";
-import "prismjs/components/prism-typescript";
 import "prismjs/components/prism-javascript";
+import "prismjs/components/prism-typescript";
 import "prismjs/components/prism-jsx";
 import "prismjs/components/prism-tsx";
 import "prismjs/components/prism-go";
@@ -11,16 +11,17 @@ import "prismjs/components/prism-bash";
 import "prismjs/components/prism-json";
 import "prismjs/components/prism-yaml";
 import "prismjs/components/prism-css";
+import "prismjs/components/prism-scss";
 import "prismjs/components/prism-sql";
 import "prismjs/components/prism-markdown";
 import "prismjs/components/prism-toml";
 import "prismjs/components/prism-docker";
+import "prismjs/components/prism-makefile";
 import "prismjs/components/prism-ruby";
 import "prismjs/components/prism-java";
 import "prismjs/components/prism-c";
 import "prismjs/components/prism-cpp";
 import "prismjs/components/prism-markup";
-import "prismjs/components/prism-xml-doc";
 
 const EXT_TO_LANG: Record<string, string> = {
   ts: "typescript",
@@ -39,7 +40,7 @@ const EXT_TO_LANG: Record<string, string> = {
   yaml: "yaml",
   yml: "yaml",
   css: "css",
-  scss: "css",
+  scss: "scss",
   sql: "sql",
   md: "markdown",
   toml: "toml",
@@ -56,12 +57,11 @@ const EXT_TO_LANG: Record<string, string> = {
   htm: "markup",
   xml: "markup",
   svg: "markup",
-  Makefile: "makefile",
   Dockerfile: "docker",
 };
 
 const FILENAME_TO_LANG: Record<string, string> = {
-  Makefile: "bash",
+  Makefile: "makefile",
   Dockerfile: "docker",
   Vagrantfile: "ruby",
   Gemfile: "ruby",
@@ -129,7 +129,7 @@ export default function CodeView({ code, filename }: CodeViewProps) {
               {/* eslint-disable-next-line react/no-danger -- Prism escapes HTML entities; see component docstring */}
               <td
                 className="code-view-code"
-                dangerouslySetInnerHTML={{ __html: line || "\n" }}
+                dangerouslySetInnerHTML={{ __html: line || "&nbsp;" }}
               />
             </tr>
           ))}
