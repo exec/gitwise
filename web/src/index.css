@@ -550,6 +550,162 @@ input:disabled {
   tab-size: 4;
 }
 
+/* ---- README ---- */
+
+.readme-container {
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.readme-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.readme-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.readme-content {
+  padding: 24px 32px;
+}
+
+.readme-content .markdown-body {
+  white-space: normal;
+}
+
+.readme-content .markdown-body h1,
+.readme-content .markdown-body h2,
+.readme-content .markdown-body h3,
+.readme-content .markdown-body h4,
+.readme-content .markdown-body h5,
+.readme-content .markdown-body h6 {
+  margin-top: 24px;
+  margin-bottom: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.readme-content .markdown-body h1 {
+  font-size: 2em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+}
+
+.readme-content .markdown-body h2 {
+  font-size: 1.5em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+}
+
+.readme-content .markdown-body h3 {
+  font-size: 1.25em;
+}
+
+.readme-content .markdown-body p {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.readme-content .markdown-body ul,
+.readme-content .markdown-body ol {
+  padding-left: 2em;
+  margin-bottom: 16px;
+}
+
+.readme-content .markdown-body li + li {
+  margin-top: 4px;
+}
+
+.readme-content .markdown-body code {
+  padding: 0.2em 0.4em;
+  font-size: 85%;
+  background: var(--bg-secondary);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+}
+
+.readme-content .markdown-body pre {
+  padding: 16px;
+  overflow-x: auto;
+  font-size: 85%;
+  line-height: 1.45;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+  margin-bottom: 16px;
+}
+
+.readme-content .markdown-body pre code {
+  padding: 0;
+  background: transparent;
+  font-size: inherit;
+}
+
+.readme-content .markdown-body blockquote {
+  padding: 0 1em;
+  color: var(--text-muted);
+  border-left: 3px solid var(--border);
+  margin: 0 0 16px 0;
+}
+
+.readme-content .markdown-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 16px;
+}
+
+.readme-content .markdown-body table th,
+.readme-content .markdown-body table td {
+  padding: 6px 13px;
+  border: 1px solid var(--border);
+}
+
+.readme-content .markdown-body table th {
+  font-weight: 600;
+  background: var(--bg-secondary);
+}
+
+.readme-content .markdown-body table tr:nth-child(2n) {
+  background: var(--bg-secondary);
+}
+
+.readme-content .markdown-body a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.readme-content .markdown-body a:hover {
+  text-decoration: underline;
+}
+
+.readme-content .markdown-body img {
+  max-width: 100%;
+}
+
+.readme-content .markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 24px 0;
+}
+
+.readme-plain {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
 /* ---- Commits ---- */
 
 .commit-list {
