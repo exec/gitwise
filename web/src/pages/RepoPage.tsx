@@ -1,5 +1,6 @@
 import { useParams, useLocation, Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { get } from "../lib/api";
 import RepoHeader from "../components/RepoHeader";
 
@@ -121,6 +122,8 @@ export default function RepoPage() {
   const repoData = repoQuery.data;
   if (!repoData) return null;
 
+  const isEmptyRepo = branchesQuery.data !== undefined && branchesQuery.data.length === 0;
+
   const sortedEntries = treeQuery.data
     ? [...treeQuery.data].sort((a, b) => {
         if (a.type === b.type) return a.name.localeCompare(b.name);
@@ -140,7 +143,11 @@ export default function RepoPage() {
         activeTab={tab === "commits" ? "commits" : "code"}
       />
 
-      {tab === "code" && (
+      {tab === "code" && isEmptyRepo && (
+        <SetupInstructions owner={owner!} repo={repo!} />
+      )}
+
+      {tab === "code" && !isEmptyRepo && (
         <div className="code-tab">
           <div className="code-toolbar">
             <select
@@ -272,6 +279,80 @@ export default function RepoPage() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <button className="btn btn-sm btn-secondary" onClick={handleCopy}>
+      {copied ? "Copied!" : "Copy"}
+    </button>
+  );
+}
+
+function SetupInstructions({ owner, repo }: { owner: string; repo: string }) {
+  const cloneUrl = `${window.location.origin}/${owner}/${repo}.git`;
+
+  const newRepoCommands = [
+    `echo "# ${repo}" >> README.md`,
+    "git init",
+    "git add README.md",
+    'git commit -m "first commit"',
+    "git branch -M main",
+    `git remote add origin ${cloneUrl}`,
+    "git push -u origin main",
+  ].join("\n");
+
+  const existingRepoCommands = [
+    `git remote add origin ${cloneUrl}`,
+    "git branch -M main",
+    "git push -u origin main",
+  ].join("\n");
+
+  return (
+    <div className="setup-instructions">
+      <div className="setup-quick">
+        <h2>Quick setup</h2>
+        <div className="setup-clone-url">
+          <input
+            type="text"
+            readOnly
+            value={cloneUrl}
+            className="setup-url-input"
+          />
+          <CopyButton text={cloneUrl} />
+        </div>
+      </div>
+
+      <div className="setup-section">
+        <h3>...or create a new repository on the command line</h3>
+        <div className="setup-code-block">
+          <pre><code>{newRepoCommands}</code></pre>
+          <div className="setup-code-copy">
+            <CopyButton text={newRepoCommands} />
+          </div>
+        </div>
+      </div>
+
+      <div className="setup-section">
+        <h3>...or push an existing repository from the command line</h3>
+        <div className="setup-code-block">
+          <pre><code>{existingRepoCommands}</code></pre>
+          <div className="setup-code-copy">
+            <CopyButton text={existingRepoCommands} />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
