@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -67,7 +68,7 @@ func (h *PullHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.webhooks.Dispatch(r.Context(), repository.ID, "pr.opened", map[string]any{
+	go h.webhooks.Dispatch(context.Background(), repository.ID, "pr.opened", map[string]any{
 		"pull_request": map[string]any{"number": pr.Number, "title": pr.Title, "head_branch": pr.SourceBranch, "base_branch": pr.TargetBranch},
 		"repository":   repository.Name,
 		"owner":        owner,
@@ -194,7 +195,7 @@ func (h *PullHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if *req.Status == "open" {
 			eventType = "pr.opened"
 		}
-		go h.webhooks.Dispatch(r.Context(), repository.ID, eventType, map[string]any{
+		go h.webhooks.Dispatch(context.Background(), repository.ID, eventType, map[string]any{
 			"pull_request": map[string]any{"number": pr.Number, "title": pr.Title, "head_branch": pr.SourceBranch, "base_branch": pr.TargetBranch},
 			"repository":   repository.Name,
 			"owner":        owner,
@@ -268,7 +269,7 @@ func (h *PullHandler) Merge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.webhooks.Dispatch(r.Context(), repository.ID, "pr.merged", map[string]any{
+	go h.webhooks.Dispatch(context.Background(), repository.ID, "pr.merged", map[string]any{
 		"pull_request": map[string]any{"number": pr.Number, "title": pr.Title, "head_branch": pr.SourceBranch, "base_branch": pr.TargetBranch},
 		"repository":   repository.Name,
 		"owner":        owner,
@@ -359,7 +360,7 @@ func (h *PullHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.webhooks.Dispatch(r.Context(), repository.ID, "review.submitted", map[string]any{
+	go h.webhooks.Dispatch(context.Background(), repository.ID, "review.submitted", map[string]any{
 		"review":       map[string]any{"state": rev.Type, "body": rev.Body},
 		"pull_request": map[string]any{"number": pr.Number, "title": pr.Title},
 		"repository":   repository.Name,
@@ -509,7 +510,7 @@ func (h *PullHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.webhooks.Dispatch(r.Context(), repository.ID, "comment.created", map[string]any{
+	go h.webhooks.Dispatch(context.Background(), repository.ID, "comment.created", map[string]any{
 		"comment":      map[string]any{"body": c.Body},
 		"pull_request": map[string]any{"number": pr.Number, "title": pr.Title},
 		"repository":   repository.Name,

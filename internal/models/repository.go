@@ -35,6 +35,7 @@ type CreateRepoRequest struct {
 }
 
 type UpdateRepoRequest struct {
+	Name          *string  `json:"name,omitempty"`
 	Description   *string  `json:"description,omitempty"`
 	Visibility    *string  `json:"visibility,omitempty"`
 	DefaultBranch *string  `json:"default_branch,omitempty"`

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -57,7 +58,7 @@ func (h *IssueHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.webhooks.Dispatch(r.Context(), repository.ID, "issue.opened", map[string]any{
+	go h.webhooks.Dispatch(context.Background(), repository.ID, "issue.opened", map[string]any{
 		"issue":      map[string]any{"number": iss.Number, "title": iss.Title},
 		"repository": repository.Name,
 		"owner":      owner,
@@ -184,7 +185,7 @@ func (h *IssueHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if *req.Status == "open" {
 			eventType = "issue.opened"
 		}
-		go h.webhooks.Dispatch(r.Context(), repository.ID, eventType, map[string]any{
+		go h.webhooks.Dispatch(context.Background(), repository.ID, eventType, map[string]any{
 			"issue":      map[string]any{"number": iss.Number, "title": iss.Title},
 			"repository": repository.Name,
 			"owner":      owner,
@@ -242,7 +243,7 @@ func (h *IssueHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.webhooks.Dispatch(r.Context(), repository.ID, "comment.created", map[string]any{
+	go h.webhooks.Dispatch(context.Background(), repository.ID, "comment.created", map[string]any{
 		"comment":    map[string]any{"body": c.Body},
 		"issue":      map[string]any{"number": iss.Number, "title": iss.Title},
 		"repository": repository.Name,

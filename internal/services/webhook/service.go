@@ -390,7 +390,6 @@ func buildDiscordPayload(eventType string, payloadJSON []byte) ([]byte, error) {
 
 	title := eventType
 	var desc string
-	var embedURL string
 
 	switch {
 	case strings.HasPrefix(eventType, "issue."):
@@ -401,9 +400,6 @@ func buildDiscordPayload(eventType string, payloadJSON []byte) ([]byte, error) {
 			action := strings.TrimPrefix(eventType, "issue.")
 			title = fmt.Sprintf("Issue #%d %s", int(num), action)
 			desc = issueTitle
-			if repoPath != "" && num > 0 {
-				embedURL = fmt.Sprintf("/%s/issues/%d", repoPath, int(num))
-			}
 		}
 
 	case strings.HasPrefix(eventType, "pr."):
@@ -414,13 +410,10 @@ func buildDiscordPayload(eventType string, payloadJSON []byte) ([]byte, error) {
 			head, _ := pr["head_branch"].(string)
 			base, _ := pr["base_branch"].(string)
 			action := strings.TrimPrefix(eventType, "pr.")
-			title = fmt.Sprintf("Pull Request #%d %s", int(num), action)
+			title = fmt.Sprintf("Pull request #%d %s", int(num), action)
 			desc = prTitle
 			if head != "" && base != "" {
 				desc += fmt.Sprintf("\n`%s` → `%s`", head, base)
-			}
-			if repoPath != "" && num > 0 {
-				embedURL = fmt.Sprintf("/%s/pulls/%d", repoPath, int(num))
 			}
 		}
 
@@ -429,9 +422,6 @@ func buildDiscordPayload(eventType string, payloadJSON []byte) ([]byte, error) {
 		commits, _ := payload["commits"].([]any)
 		branch := strings.TrimPrefix(ref, "refs/heads/")
 		title = fmt.Sprintf("Push to %s", branch)
-		if repoPath != "" {
-			embedURL = fmt.Sprintf("/%s/commits", repoPath)
-		}
 		if len(commits) > 0 {
 			var lines []string
 			for i, c := range commits {
@@ -464,13 +454,23 @@ func buildDiscordPayload(eventType string, payloadJSON []byte) ([]byte, error) {
 			}
 			desc = body
 		}
+		// Add context about which issue/PR the comment is on
+		if iss, ok := payload["issue"].(map[string]any); ok {
+			num, _ := iss["number"].(float64)
+			title = fmt.Sprintf("Comment on issue #%d", int(num))
+		} else if pr, ok := payload["pull_request"].(map[string]any); ok {
+			num, _ := pr["number"].(float64)
+			title = fmt.Sprintf("Comment on pull request #%d", int(num))
+		} else {
+			title = "New comment"
+		}
 
 	case eventType == "review.submitted":
 		review, _ := payload["review"].(map[string]any)
 		if review != nil {
 			state, _ := review["state"].(string)
 			body, _ := review["body"].(string)
-			title = fmt.Sprintf("Review: %s", state)
+			title = fmt.Sprintf("Review submitted: %s", state)
 			if len(body) > 200 {
 				body = body[:200] + "..."
 			}
@@ -478,6 +478,7 @@ func buildDiscordPayload(eventType string, payloadJSON []byte) ([]byte, error) {
 		}
 
 	case eventType == "ping":
+		title = "Webhook connected"
 		desc = "Webhook configured successfully!"
 	}
 
@@ -488,9 +489,6 @@ func buildDiscordPayload(eventType string, payloadJSON []byte) ([]byte, error) {
 	}
 	if desc != "" {
 		embed["description"] = desc
-	}
-	if embedURL != "" {
-		embed["url"] = embedURL
 	}
 	if repoPath != "" {
 		embed["footer"] = map[string]any{

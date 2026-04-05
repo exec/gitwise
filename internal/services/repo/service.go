@@ -269,6 +269,14 @@ func (s *Service) Update(ctx context.Context, repoID uuid.UUID, req models.Updat
 	args := []any{repoID}
 	argIdx := 2
 
+	if req.Name != nil {
+		if !repoNameRe.MatchString(*req.Name) {
+			return nil, ErrInvalidName
+		}
+		setClauses = append(setClauses, fmt.Sprintf("name = $%d", argIdx))
+		args = append(args, *req.Name)
+		argIdx++
+	}
 	if req.Description != nil {
 		setClauses = append(setClauses, fmt.Sprintf("description = $%d", argIdx))
 		args = append(args, *req.Description)
