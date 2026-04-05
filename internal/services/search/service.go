@@ -694,9 +694,10 @@ func (s *Service) searchAll(ctx context.Context, req SearchRequest) (*SearchResp
 			continue
 		}
 		totalSum += sr.resp.Total
-		for _, r := range sr.resp.Results {
-			typeCounts[r.Type]++
-			allResults = append(allResults, r)
+		allResults = append(allResults, sr.resp.Results...)
+		// Use Total for facet counts (not len of results which is capped)
+		if len(sr.resp.Results) > 0 {
+			typeCounts[sr.resp.Results[0].Type] = sr.resp.Total
 		}
 	}
 
