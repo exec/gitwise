@@ -189,7 +189,7 @@ func (s *Server) setupMiddleware() {
 	s.router.Use(chimw.Logger)
 	s.router.Use(chimw.Recoverer)
 	s.router.Use(corsMiddleware)
-	s.router.Use(middleware.MaxBodySize(1 << 20)) // 1 MB body limit
+	s.router.Use(middleware.MaxBodySize(1 << 30)) // 1 GB body limit (git pushes can be large)
 	s.router.Use(s.auth.Handler)
 }
 
