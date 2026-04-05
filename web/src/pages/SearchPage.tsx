@@ -203,8 +203,8 @@ function RepoResult({ result }: { result: SearchResult }) {
         <p className="search-result-desc">{result.snippet}</p>
       )}
       <div className="search-result-meta">
-        {result.meta.language && <span>{result.meta.language}</span>}
-        {result.meta.stars !== undefined && <span>{result.meta.stars} stars</span>}
+        {result.meta?.language && <span>{result.meta?.language}</span>}
+        {result.meta?.stars !== undefined && <span>{result.meta?.stars} stars</span>}
       </div>
     </>
   );
@@ -215,18 +215,18 @@ function IssueResult({ result }: { result: SearchResult }) {
     <>
       <div className="search-result-header">
         <span
-          className={`issue-status-dot ${result.meta.status === "open" ? "open" : "closed"}`}
+          className={`issue-status-dot ${result.meta?.status === "open" ? "open" : "closed"}`}
         />
         <Link to={result.url} className="search-result-title">
           {result.title}
         </Link>
-        {result.meta.number !== undefined && (
-          <span className="search-result-number">#{result.meta.number}</span>
+        {result.meta?.number !== undefined && (
+          <span className="search-result-number">#{result.meta?.number}</span>
         )}
       </div>
-      {result.meta.repo && (
+      {result.meta?.repo && (
         <div className="search-result-meta">
-          <span>{result.meta.owner}/{result.meta.repo}</span>
+          <span>{result.meta?.owner}/{result.meta?.repo}</span>
         </div>
       )}
     </>
@@ -238,18 +238,18 @@ function PullResult({ result }: { result: SearchResult }) {
     <>
       <div className="search-result-header">
         <span
-          className={`pr-status-dot ${result.meta.status === "merged" ? "merged" : result.meta.status === "open" ? "open" : "closed"}`}
+          className={`pr-status-dot ${result.meta?.status === "merged" ? "merged" : result.meta?.status === "open" ? "open" : "closed"}`}
         />
         <Link to={result.url} className="search-result-title">
           {result.title}
         </Link>
-        {result.meta.number !== undefined && (
-          <span className="search-result-number">#{result.meta.number}</span>
+        {result.meta?.number !== undefined && (
+          <span className="search-result-number">#{result.meta?.number}</span>
         )}
       </div>
-      {result.meta.repo && (
+      {result.meta?.repo && (
         <div className="search-result-meta">
-          <span>{result.meta.owner}/{result.meta.repo}</span>
+          <span>{result.meta?.owner}/{result.meta?.repo}</span>
         </div>
       )}
     </>
@@ -257,22 +257,22 @@ function PullResult({ result }: { result: SearchResult }) {
 }
 
 function CodeResult({ result }: { result: SearchResult }) {
-  const lineStart = result.meta.line_start ?? 1;
+  const lineStart = result.meta?.line_start ?? 1;
   const lines = result.snippet.split("\n");
 
   return (
     <>
       <div className="search-result-header">
         <Link to={result.url} className="search-result-title search-result-filepath">
-          {result.meta.file_path ?? result.title}
+          {result.meta?.file_path ?? result.title}
         </Link>
-        {result.meta.language && (
-          <span className="search-result-lang">{result.meta.language}</span>
+        {result.meta?.language && (
+          <span className="search-result-lang">{result.meta?.language}</span>
         )}
       </div>
-      {result.meta.repo && (
+      {result.meta?.repo && (
         <div className="search-result-meta">
-          <span>{result.meta.owner}/{result.meta.repo}</span>
+          <span>{result.meta?.owner}/{result.meta?.repo}</span>
         </div>
       )}
       <div className="code-snippet">
@@ -292,7 +292,7 @@ function CodeResult({ result }: { result: SearchResult }) {
 }
 
 function CommitResult({ result }: { result: SearchResult }) {
-  const shortSha = result.meta.sha?.slice(0, 7) ?? "";
+  const shortSha = result.meta?.sha?.slice(0, 7) ?? "";
 
   return (
     <>
@@ -303,11 +303,11 @@ function CommitResult({ result }: { result: SearchResult }) {
         </Link>
       </div>
       <div className="search-result-meta">
-        {result.meta.repo && (
-          <span>{result.meta.owner}/{result.meta.repo}</span>
+        {result.meta?.repo && (
+          <span>{result.meta?.owner}/{result.meta?.repo}</span>
         )}
-        {result.meta.date && (
-          <span>{new Date(result.meta.date).toLocaleDateString()}</span>
+        {result.meta?.date && (
+          <span>{new Date(result.meta?.date).toLocaleDateString()}</span>
         )}
       </div>
     </>
