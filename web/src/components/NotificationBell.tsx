@@ -45,6 +45,7 @@ export default function NotificationBell() {
         className="notification-bell-btn"
         onClick={() => setOpen(!open)}
         aria-label="Notifications"
+        aria-expanded={open}
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
           <path
@@ -60,13 +61,15 @@ export default function NotificationBell() {
       </button>
 
       {open && (
-        <div className="notification-dropdown">
+        <div className="notification-dropdown" role="menu">
           <div className="notification-header">
             <span className="notification-header-title">Notifications</span>
             {unreadCount > 0 && (
               <button
                 className="notification-mark-all"
                 onClick={() => markAllRead()}
+                role="menuitem"
+                tabIndex={0}
               >
                 Mark all read
               </button>
@@ -81,6 +84,14 @@ export default function NotificationBell() {
                   key={n.id}
                   className={`notification-item ${n.read ? "" : "unread"}`}
                   onClick={() => handleNotificationClick(n.id, n.link, n.read)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleNotificationClick(n.id, n.link, n.read);
+                    }
+                  }}
+                  role="menuitem"
+                  tabIndex={0}
                 >
                   <div className="notification-item-title">{n.title}</div>
                   {n.body && (

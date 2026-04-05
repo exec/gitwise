@@ -19,7 +19,7 @@ export function useNotifications() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const queryClient = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backoff = useRef(1000);
   const [wsConnected, setWsConnected] = useState(false);
 
@@ -73,7 +73,8 @@ export function useNotifications() {
     ws.onclose = () => {
       setWsConnected(false);
       wsRef.current = null;
-      if (isAuthenticated) {
+      // Check current auth state, not stale closure value
+      if (useAuthStore.getState().isAuthenticated) {
         reconnectTimer.current = setTimeout(() => {
           backoff.current = Math.min(backoff.current * 2, 30000);
           connect();
@@ -93,7 +94,7 @@ export function useNotifications() {
       connect();
     }
     return () => {
-      clearTimeout(reconnectTimer.current);
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       wsRef.current?.close();
       wsRef.current = null;
     };
