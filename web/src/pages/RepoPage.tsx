@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useParams, useLocation, Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { get } from "../lib/api";
@@ -59,6 +60,7 @@ export default function RepoPage() {
   const { owner, repo, ref: refParam, "*": splat } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const [copied, setCopied] = useState(false);
 
   const tab = detectTab(location.pathname);
   const view = detectView(location.pathname);
@@ -139,6 +141,25 @@ export default function RepoPage() {
         repo={repo!}
         activeTab={tab === "commits" ? "commits" : "code"}
       />
+
+      <div className="clone-url">
+        <input
+          type="text"
+          readOnly
+          value={`${window.location.origin}/${owner}/${repo}.git`}
+          onFocus={(e) => e.target.select()}
+        />
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={() => {
+            navigator.clipboard.writeText(`${window.location.origin}/${owner}/${repo}.git`);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          }}
+        >
+          {copied ? "Copied!" : "Copy"}
+        </button>
+      </div>
 
       {tab === "code" && (
         <div className="code-tab">

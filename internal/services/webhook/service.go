@@ -11,9 +11,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,14 +27,59 @@ import (
 )
 
 var (
-	ErrNotFound   = errors.New("webhook not found")
-	ErrInvalidURL = errors.New("invalid webhook URL")
+	ErrNotFound         = errors.New("webhook not found")
+	ErrInvalidURL       = errors.New("invalid webhook URL")
+	ErrPrivateURL       = errors.New("webhook URL resolves to a private IP address")
+	ErrInvalidEventType = errors.New("invalid webhook event type")
 )
 
 // retryDelays defines exponential backoff for delivery retries.
 var retryDelays = []time.Duration{1 * time.Minute, 5 * time.Minute, 30 * time.Minute}
 
-const maxAttempts = 3
+const maxAttempts            = 3
+const maxConcurrentDeliveries = 10
+
+// validEventTypes defines the set of event types that webhooks can subscribe to.
+var validEventTypes = map[string]bool{
+	"push":              true,
+	"ping":              true,
+	"issue.opened":      true,
+	"issue.closed":      true,
+	"pr.opened":         true,
+	"pr.merged":         true,
+	"pr.closed":         true,
+	"review.submitted":  true,
+	"comment.created":   true,
+}
+
+// privateRanges defines RFC 1918 / RFC 4193 / loopback / link-local ranges
+// that must be blocked for webhook URLs to prevent SSRF.
+var privateRanges []net.IPNet
+
+func init() {
+	for _, cidr := range []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"127.0.0.0/8",
+		"169.254.0.0/16",
+		"::1/128",
+		"fc00::/7",
+		"fe80::/10",
+	} {
+		_, ipNet, _ := net.ParseCIDR(cidr)
+		privateRanges = append(privateRanges, *ipNet)
+	}
+}
+
+func isPrivateIP(ip net.IP) bool {
+	for _, r := range privateRanges {
+		if r.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
 
 type Service struct {
 	db     *pgxpool.Pool
@@ -39,10 +87,34 @@ type Service struct {
 }
 
 func NewService(db *pgxpool.Pool) *Service {
+	safeDialer := &net.Dialer{
+		Timeout: 5 * time.Second,
+		Control: func(network, address string, c syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+			ip := net.ParseIP(host)
+			if ip != nil && isPrivateIP(ip) {
+				return fmt.Errorf("connections to private IP %s are not allowed", host)
+			}
+			return nil
+		},
+	}
+
 	return &Service{
 		db: db,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				DialContext: safeDialer.DialContext,
+			},
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 3 {
+					return errors.New("stopped after 3 redirects")
+				}
+				return nil
+			},
 		},
 	}
 }
@@ -50,7 +122,11 @@ func NewService(db *pgxpool.Pool) *Service {
 func (s *Service) Create(ctx context.Context, repoID uuid.UUID, req models.CreateWebhookRequest) (*models.Webhook, error) {
 	rawURL := strings.TrimSpace(req.URL)
 	if err := validateURL(rawURL); err != nil {
-		return nil, ErrInvalidURL
+		return nil, err
+	}
+
+	if err := validateEventTypes(req.Events); err != nil {
+		return nil, err
 	}
 
 	active := true
@@ -138,7 +214,7 @@ func (s *Service) Update(ctx context.Context, repoID, webhookID uuid.UUID, req m
 	if req.URL != nil {
 		rawURL := strings.TrimSpace(*req.URL)
 		if err := validateURL(rawURL); err != nil {
-			return nil, ErrInvalidURL
+			return nil, err
 		}
 		setClauses = append(setClauses, fmt.Sprintf("url = $%d", argIdx))
 		args = append(args, rawURL)
@@ -150,6 +226,9 @@ func (s *Service) Update(ctx context.Context, repoID, webhookID uuid.UUID, req m
 		argIdx++
 	}
 	if req.Events != nil {
+		if err := validateEventTypes(*req.Events); err != nil {
+			return nil, err
+		}
 		setClauses = append(setClauses, fmt.Sprintf("events = $%d", argIdx))
 		args = append(args, *req.Events)
 		argIdx++
@@ -239,14 +318,197 @@ func (s *Service) Dispatch(ctx context.Context, repoID uuid.UUID, eventType stri
 		return
 	}
 
+	var webhooks []models.Webhook
 	for rows.Next() {
 		var w models.Webhook
 		if err := rows.Scan(&w.ID, &w.RepoID, &w.URL, &w.Secret, &w.Events, &w.Active, &w.CreatedAt, &w.UpdatedAt); err != nil {
 			slog.Error("webhook scan failed", "error", err)
 			continue
 		}
-		go s.deliver(w, eventType, payloadJSON)
+		webhooks = append(webhooks, w)
 	}
+
+	sem := make(chan struct{}, maxConcurrentDeliveries)
+	var wg sync.WaitGroup
+	for _, wh := range webhooks {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(w models.Webhook) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			s.deliver(w, eventType, payloadJSON)
+		}(wh)
+	}
+	wg.Wait()
+}
+
+func isDiscordWebhook(rawURL string) bool {
+	return strings.Contains(rawURL, "discord.com/api/webhooks/") ||
+		strings.Contains(rawURL, "discordapp.com/api/webhooks/")
+}
+
+const discordAvatarURL = "https://raw.githubusercontent.com/exec/gitwise/main/web/public/gitwise-avatar.png"
+
+func buildDiscordPayload(eventType string, payloadJSON []byte) ([]byte, error) {
+	var payload map[string]any
+	if err := json.Unmarshal(payloadJSON, &payload); err != nil {
+		return nil, err
+	}
+
+	// Pick color by event type
+	colors := map[string]int{
+		"push":             0x2196F3, // blue
+		"ping":             0x9E9E9E, // gray
+		"issue.opened":     0x4CAF50, // green
+		"issue.closed":     0xF44336, // red
+		"pr.opened":        0x4CAF50, // green
+		"pr.merged":        0x9C27B0, // purple
+		"pr.closed":        0xF44336, // red
+		"review.submitted": 0xFF9800, // orange
+		"comment.created":  0x00BCD4, // cyan
+	}
+	color := colors[eventType]
+	if color == 0 {
+		color = 0x607D8B // default blue-gray
+	}
+
+	// Extract common fields
+	repoName := ""
+	if repoObj, ok := payload["repository"].(map[string]any); ok {
+		repoName, _ = repoObj["name"].(string)
+	} else if s, ok := payload["repository"].(string); ok {
+		repoName = s
+	}
+	sender, _ := payload["sender"].(string)
+	owner, _ := payload["owner"].(string)
+
+	// Build repo path for URLs (owner/repo)
+	repoPath := repoName
+	if owner != "" && repoName != "" {
+		repoPath = owner + "/" + repoName
+	}
+
+	title := eventType
+	var desc string
+	var embedURL string
+
+	switch {
+	case strings.HasPrefix(eventType, "issue."):
+		issue, _ := payload["issue"].(map[string]any)
+		if issue != nil {
+			num, _ := issue["number"].(float64)
+			issueTitle, _ := issue["title"].(string)
+			action := strings.TrimPrefix(eventType, "issue.")
+			title = fmt.Sprintf("Issue #%d %s", int(num), action)
+			desc = issueTitle
+			if repoPath != "" && num > 0 {
+				embedURL = fmt.Sprintf("/%s/issues/%d", repoPath, int(num))
+			}
+		}
+
+	case strings.HasPrefix(eventType, "pr."):
+		pr, _ := payload["pull_request"].(map[string]any)
+		if pr != nil {
+			num, _ := pr["number"].(float64)
+			prTitle, _ := pr["title"].(string)
+			head, _ := pr["head_branch"].(string)
+			base, _ := pr["base_branch"].(string)
+			action := strings.TrimPrefix(eventType, "pr.")
+			title = fmt.Sprintf("Pull Request #%d %s", int(num), action)
+			desc = prTitle
+			if head != "" && base != "" {
+				desc += fmt.Sprintf("\n`%s` → `%s`", head, base)
+			}
+			if repoPath != "" && num > 0 {
+				embedURL = fmt.Sprintf("/%s/pulls/%d", repoPath, int(num))
+			}
+		}
+
+	case eventType == "push":
+		ref, _ := payload["ref"].(string)
+		commits, _ := payload["commits"].([]any)
+		branch := strings.TrimPrefix(ref, "refs/heads/")
+		title = fmt.Sprintf("Push to %s", branch)
+		if repoPath != "" {
+			embedURL = fmt.Sprintf("/%s/commits", repoPath)
+		}
+		if len(commits) > 0 {
+			var lines []string
+			for i, c := range commits {
+				if i >= 5 {
+					lines = append(lines, fmt.Sprintf("... and %d more", len(commits)-5))
+					break
+				}
+				cm, _ := c.(map[string]any)
+				if cm != nil {
+					sha, _ := cm["id"].(string)
+					msg, _ := cm["message"].(string)
+					if len(sha) > 7 {
+						sha = sha[:7]
+					}
+					if idx := strings.IndexByte(msg, '\n'); idx > 0 {
+						msg = msg[:idx]
+					}
+					lines = append(lines, fmt.Sprintf("`%s` %s", sha, msg))
+				}
+			}
+			desc = strings.Join(lines, "\n")
+		}
+
+	case eventType == "comment.created":
+		comment, _ := payload["comment"].(map[string]any)
+		if comment != nil {
+			body, _ := comment["body"].(string)
+			if len(body) > 200 {
+				body = body[:200] + "..."
+			}
+			desc = body
+		}
+
+	case eventType == "review.submitted":
+		review, _ := payload["review"].(map[string]any)
+		if review != nil {
+			state, _ := review["state"].(string)
+			body, _ := review["body"].(string)
+			title = fmt.Sprintf("Review: %s", state)
+			if len(body) > 200 {
+				body = body[:200] + "..."
+			}
+			desc = body
+		}
+
+	case eventType == "ping":
+		desc = "Webhook configured successfully!"
+	}
+
+	embed := map[string]any{
+		"title":     title,
+		"color":     color,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+	if desc != "" {
+		embed["description"] = desc
+	}
+	if embedURL != "" {
+		embed["url"] = embedURL
+	}
+	if repoPath != "" {
+		embed["footer"] = map[string]any{
+			"text":     repoPath,
+			"icon_url": discordAvatarURL,
+		}
+	}
+	if sender != "" {
+		embed["author"] = map[string]string{"name": sender}
+	}
+
+	discord := map[string]any{
+		"username":   "Gitwise",
+		"avatar_url": discordAvatarURL,
+		"embeds":     []any{embed},
+	}
+
+	return json.Marshal(discord)
 }
 
 func (s *Service) deliver(w models.Webhook, eventType string, payloadJSON []byte) {
@@ -254,8 +516,19 @@ func (s *Service) deliver(w models.Webhook, eventType string, payloadJSON []byte
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
+	// Transform payload for Discord webhooks
+	body := payloadJSON
+	if isDiscordWebhook(w.URL) {
+		discordBody, err := buildDiscordPayload(eventType, payloadJSON)
+		if err != nil {
+			slog.Error("discord payload transform failed", "webhook_id", w.ID, "error", err)
+			return
+		}
+		body = discordBody
+	}
+
 	// Build request
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.URL, bytes.NewReader(payloadJSON))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.URL, bytes.NewReader(body))
 	if err != nil {
 		slog.Error("webhook request build failed", "webhook_id", w.ID, "error", err)
 		return
@@ -266,9 +539,9 @@ func (s *Service) deliver(w models.Webhook, eventType string, payloadJSON []byte
 	req.Header.Set("X-Gitwise-Delivery", deliveryID.String())
 	req.Header.Set("User-Agent", "Gitwise-Hookshot")
 
-	if w.Secret != "" {
+	if w.Secret != "" && !isDiscordWebhook(w.URL) {
 		mac := hmac.New(sha256.New, []byte(w.Secret))
-		mac.Write(payloadJSON)
+		mac.Write(body)
 		sig := hex.EncodeToString(mac.Sum(nil))
 		req.Header.Set("X-Hub-Signature-256", "sha256="+sig)
 	}
@@ -356,9 +629,18 @@ func (s *Service) RetryPending(ctx context.Context) error {
 		return fmt.Errorf("iterate pending retries: %w", err)
 	}
 
+	sem := make(chan struct{}, maxConcurrentDeliveries)
+	var wg sync.WaitGroup
 	for _, p := range items {
-		go s.retryDelivery(p.deliveryID, p.webhookID, p.eventType, p.payload, p.attempts, p.url, p.secret)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(p pending) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			s.retryDelivery(p.deliveryID, p.webhookID, p.eventType, p.payload, p.attempts, p.url, p.secret)
+		}(p)
 	}
+	wg.Wait()
 	return nil
 }
 
@@ -366,7 +648,18 @@ func (s *Service) retryDelivery(deliveryID, webhookID uuid.UUID, eventType strin
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(payload))
+	// Transform payload for Discord webhooks (stored payload is raw event JSON)
+	body := payload
+	if isDiscordWebhook(webhookURL) {
+		discordBody, err := buildDiscordPayload(eventType, payload)
+		if err != nil {
+			slog.Error("discord retry payload transform failed", "delivery_id", deliveryID, "error", err)
+			return
+		}
+		body = discordBody
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(body))
 	if err != nil {
 		slog.Error("retry request build failed", "delivery_id", deliveryID, "error", err)
 		return
@@ -377,9 +670,9 @@ func (s *Service) retryDelivery(deliveryID, webhookID uuid.UUID, eventType strin
 	req.Header.Set("X-Gitwise-Delivery", deliveryID.String())
 	req.Header.Set("User-Agent", "Gitwise-Hookshot")
 
-	if secret != "" {
+	if secret != "" && !isDiscordWebhook(webhookURL) {
 		mac := hmac.New(sha256.New, []byte(secret))
-		mac.Write(payload)
+		mac.Write(body)
 		sig := hex.EncodeToString(mac.Sum(nil))
 		req.Header.Set("X-Hub-Signature-256", "sha256="+sig)
 	}
@@ -426,6 +719,12 @@ func (s *Service) retryDelivery(deliveryID, webhookID uuid.UUID, eventType strin
 	}
 }
 
+// DeliverOne delivers a payload to a single webhook. Used by the Test handler
+// to avoid broadcasting to all webhooks that subscribe to the event type.
+func (s *Service) DeliverOne(ctx context.Context, wh models.Webhook, eventType string, payload []byte) {
+	s.deliver(wh, eventType, payload)
+}
+
 func validateURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -436,6 +735,27 @@ func validateURL(rawURL string) error {
 	}
 	if u.Host == "" {
 		return ErrInvalidURL
+	}
+
+	hostname := u.Hostname()
+	ips, err := net.LookupIP(hostname)
+	if err != nil {
+		return ErrInvalidURL
+	}
+	for _, ip := range ips {
+		if isPrivateIP(ip) {
+			return ErrPrivateURL
+		}
+	}
+
+	return nil
+}
+
+func validateEventTypes(events []string) error {
+	for _, e := range events {
+		if !validEventTypes[e] {
+			return fmt.Errorf("%w: %s", ErrInvalidEventType, e)
+		}
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { get } from "../lib/api";
+import { avatarUrl } from "../lib/avatar";
 import { useAuthStore } from "../stores/auth";
 import ContributionGraph from "../components/ContributionGraph";
 
@@ -97,7 +98,7 @@ export default function ProfilePage() {
         <div className="profile-header">
           {profile.avatar_url ? (
             <img
-              src={profile.avatar_url}
+              src={avatarUrl(profile.avatar_url)}
               alt={profile.username}
               className="profile-avatar"
             />

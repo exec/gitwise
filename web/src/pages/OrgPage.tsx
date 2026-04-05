@@ -1,6 +1,7 @@
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { get } from "../lib/api";
+import { avatarUrl } from "../lib/avatar";
 
 interface Organization {
   id: string;
@@ -81,7 +82,7 @@ export default function OrgPage() {
     <div className="org-page">
       <div className="org-header">
         {org.avatar_url ? (
-          <img src={org.avatar_url} alt={org.name} className="org-avatar" />
+          <img src={avatarUrl(org.avatar_url)} alt={org.name} className="org-avatar" />
         ) : (
           <div className="org-avatar org-avatar-placeholder">
             {(org.display_name || org.name).charAt(0).toUpperCase()}
@@ -114,12 +115,12 @@ export default function OrgPage() {
             {membersQuery.data.map((m) => (
               <Link
                 key={m.user_id}
-                to={`/users/${m.username}`}
+                to={`/${m.username}`}
                 className="member-card"
               >
                 {m.avatar_url ? (
                   <img
-                    src={m.avatar_url}
+                    src={avatarUrl(m.avatar_url)}
                     alt={m.username}
                     className="member-avatar"
                   />

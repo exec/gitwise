@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { get } from "../lib/api";
+import { useAuthStore } from "../stores/auth";
 
 interface Repo {
   owner_name: string;
@@ -12,10 +13,13 @@ interface Repo {
 interface RepoHeaderProps {
   owner: string;
   repo: string;
-  activeTab: "code" | "issues" | "pulls" | "commits";
+  activeTab: "code" | "issues" | "pulls" | "commits" | "settings";
 }
 
 export default function RepoHeader({ owner, repo, activeTab }: RepoHeaderProps) {
+  const currentUser = useAuthStore((s) => s.user);
+  const isOwner = currentUser?.username === owner;
+
   const repoQuery = useQuery({
     queryKey: ["repo", owner, repo],
     queryFn: () => get<Repo>(`/repos/${owner}/${repo}`).then((r) => r.data),
@@ -71,6 +75,14 @@ export default function RepoHeader({ owner, repo, activeTab }: RepoHeaderProps) 
         >
           Commits
         </Link>
+        {isOwner && (
+          <Link
+            to={`/${owner}/${repo}/settings`}
+            className={`tab ${activeTab === "settings" ? "tab-active" : ""}`}
+          >
+            Settings
+          </Link>
+        )}
       </div>
     </>
   );

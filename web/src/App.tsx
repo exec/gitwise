@@ -16,6 +16,9 @@ import SearchPage from "./pages/SearchPage";
 import ProfilePage from "./pages/ProfilePage";
 import EditProfilePage from "./pages/EditProfilePage";
 import OrgPage from "./pages/OrgPage";
+import UserSettingsPage from "./pages/UserSettingsPage";
+import RepoSettingsPage from "./pages/RepoSettingsPage";
+import NotFoundPage from "./pages/NotFoundPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -51,11 +54,15 @@ export default function App() {
         {/* Search */}
         <Route path="/search" element={<SearchPage />} />
 
-        {/* Profile */}
-        <Route path="/users/:username" element={<ProfilePage />} />
-
-        {/* Organizations */}
-        <Route path="/orgs/:name" element={<OrgPage />} />
+        {/* Settings */}
+        <Route
+          path="/settings"
+          element={
+            <RequireAuth>
+              <UserSettingsPage />
+            </RequireAuth>
+          }
+        />
         <Route
           path="/settings/profile"
           element={
@@ -65,8 +72,24 @@ export default function App() {
           }
         />
 
+        {/* Organizations */}
+        <Route path="/orgs/:name" element={<OrgPage />} />
+
+        {/* Repo settings (before catch-all repo route) */}
+        <Route
+          path="/:owner/:repo/settings"
+          element={
+            <RequireAuth>
+              <RepoSettingsPage />
+            </RequireAuth>
+          }
+        />
+
         {/* Repo pages */}
         <Route path="/:owner/:repo" element={<RepoPage />} />
+
+        {/* Profile (must be after /:owner/:repo so two-segment paths match first) */}
+        <Route path="/:username" element={<ProfilePage />} />
         <Route path="/:owner/:repo/tree/:ref/*" element={<RepoPage />} />
         <Route path="/:owner/:repo/blob/:ref/*" element={<RepoPage />} />
         <Route path="/:owner/:repo/commits" element={<RepoPage />} />
@@ -100,6 +123,9 @@ export default function App() {
           path="/:owner/:repo/pulls/:number"
           element={<PullDetailPage />}
         />
+
+        {/* 404 catch-all */}
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </Layout>
   );

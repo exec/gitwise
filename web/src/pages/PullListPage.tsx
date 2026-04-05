@@ -117,7 +117,7 @@ export default function PullListPage() {
                 </Link>
               </div>
               <div className="issue-meta">
-                #{pr.number} by {pr.author_name} &middot;{" "}
+                #{pr.number} by <Link to={`/${pr.author_name}`} className="author-link">{pr.author_name}</Link> &middot;{" "}
                 {pr.source_branch} &rarr; {pr.target_branch} &middot;{" "}
                 {new Date(pr.created_at).toLocaleDateString()}
               </div>

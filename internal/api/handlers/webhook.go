@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -63,6 +64,14 @@ func (h *WebhookHandler) Create(w http.ResponseWriter, r *http.Request) {
 	wh, err := h.webhooks.Create(r.Context(), repository.ID, req)
 	if errors.Is(err, webhook.ErrInvalidURL) {
 		writeError(w, http.StatusBadRequest, "validation_error", "invalid webhook URL: must be http or https")
+		return
+	}
+	if errors.Is(err, webhook.ErrPrivateURL) {
+		writeError(w, http.StatusBadRequest, "validation_error", "webhook URL must not resolve to a private IP address")
+		return
+	}
+	if errors.Is(err, webhook.ErrInvalidEventType) {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 		return
 	}
 	if err != nil {
@@ -137,6 +146,14 @@ func (h *WebhookHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if errors.Is(err, webhook.ErrInvalidURL) {
 		writeError(w, http.StatusBadRequest, "validation_error", "invalid webhook URL: must be http or https")
+		return
+	}
+	if errors.Is(err, webhook.ErrPrivateURL) {
+		writeError(w, http.StatusBadRequest, "validation_error", "webhook URL must not resolve to a private IP address")
+		return
+	}
+	if errors.Is(err, webhook.ErrInvalidEventType) {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 		return
 	}
 	if err != nil {
@@ -240,7 +257,13 @@ func (h *WebhookHandler) Test(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	h.webhooks.Dispatch(r.Context(), repository.ID, "ping", payload)
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "failed to marshal payload")
+		return
+	}
+
+	h.webhooks.DeliverOne(r.Context(), *wh, "ping", payloadJSON)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ping sent"})
 }

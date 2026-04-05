@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { patch, get } from "../lib/api";
-import { useAuthStore, User } from "../stores/auth";
+import { useAuthStore } from "../stores/auth";
+import type { User } from "../stores/auth";
 
 interface ProfileForm {
   full_name: string;
@@ -57,7 +58,7 @@ export default function EditProfilePage() {
         avatar_url: form.avatar_url,
       });
       queryClient.invalidateQueries({ queryKey: ["profile", user?.username] });
-      navigate(`/users/${user?.username}`);
+      navigate(`/${user?.username}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update profile");
       setSubmitting(false);

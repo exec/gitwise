@@ -1,10 +1,11 @@
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { get, post, put, patch } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
 import RepoHeader from "../components/RepoHeader";
 import DiffViewer from "../components/DiffViewer";
+import Markdown from "../components/Markdown";
 
 interface PRIntent {
   type?: string;
@@ -96,6 +97,9 @@ export default function PullDetailPage() {
   const [reviewBody, setReviewBody] = useState("");
   const [pendingInlineComments, setPendingInlineComments] = useState<Array<{path: string, line: number, side: string, body: string}>>([]);
   const [deleteBranch, setDeleteBranch] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editBody, setEditBody] = useState("");
 
   const prQuery = useQuery({
     queryKey: ["pull", owner, repo, number],
@@ -201,6 +205,17 @@ export default function PullDetailPage() {
     },
   });
 
+  const updatePR = useMutation({
+    mutationFn: (data: { title?: string; body?: string }) =>
+      patch(`/repos/${owner}/${repo}/pulls/${number}`, data),
+    onSuccess: () => {
+      setIsEditing(false);
+      queryClient.invalidateQueries({
+        queryKey: ["pull", owner, repo, number],
+      });
+    },
+  });
+
   function getExistingInlineComments(reviews?: Review[]): Array<{ path: string; line: number; side: string; body: string; author_name: string }> {
     if (!reviews) return [];
     const result: Array<{ path: string; line: number; side: string; body: string; author_name: string }> = [];
@@ -243,21 +258,74 @@ export default function PullDetailPage() {
 
       <div className="pr-detail">
         <div className="issue-header">
-          <h2>
-            {pr.title} <span className="issue-number">#{pr.number}</span>
-          </h2>
-          <div className="issue-status-bar">
-            <span
-              className={`issue-status-badge ${pr.status === "merged" ? "merged" : pr.status === "open" || pr.status === "draft" ? "open" : "closed"}`}
-            >
-              {pr.status}
-            </span>
-            <span className="issue-meta-info">
-              {pr.author_name} wants to merge{" "}
-              <code>{pr.source_branch}</code> into{" "}
-              <code>{pr.target_branch}</code>
-            </span>
-          </div>
+          {isEditing ? (
+            <div className="edit-form">
+              <input
+                className="edit-input"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+              />
+              <textarea
+                className="edit-textarea"
+                value={editBody}
+                onChange={(e) => setEditBody(e.target.value)}
+                rows={8}
+              />
+              <div className="edit-actions">
+                <button
+                  className="btn btn-primary"
+                  onClick={() => updatePR.mutate({ title: editTitle, body: editBody })}
+                  disabled={!editTitle.trim() || updatePR.isPending}
+                >
+                  Save
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setIsEditing(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+              {updatePR.error && (
+                <div className="error-banner">
+                  {updatePR.error instanceof Error
+                    ? updatePR.error.message
+                    : "Failed to update pull request"}
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              <h2>
+                {pr.title} <span className="issue-number">#{pr.number}</span>
+                {user && (user.id === pr.author_id || user.username === owner) && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      setEditTitle(pr.title);
+                      setEditBody(pr.body || "");
+                      setIsEditing(true);
+                    }}
+                    style={{ marginLeft: 8, verticalAlign: "middle" }}
+                  >
+                    Edit
+                  </button>
+                )}
+              </h2>
+              <div className="issue-status-bar">
+                <span
+                  className={`issue-status-badge ${pr.status === "merged" ? "merged" : pr.status === "open" || pr.status === "draft" ? "open" : "closed"}`}
+                >
+                  {pr.status}
+                </span>
+                <span className="issue-meta-info">
+                  <Link to={`/${pr.author_name}`} className="author-link">{pr.author_name}</Link> wants to merge{" "}
+                  <code>{pr.source_branch}</code> into{" "}
+                  <code>{pr.target_branch}</code>
+                </span>
+              </div>
+            </>
+          )}
         </div>
 
         {pr.intent?.type && (
@@ -336,16 +404,16 @@ export default function PullDetailPage() {
 
         {tab === "conversation" && (
           <div className="conversation-tab">
-            {pr.body && (
+            {!isEditing && pr.body && (
               <div className="comment-card">
                 <div className="comment-header">
-                  <strong>{pr.author_name}</strong>
+                  <strong><Link to={`/${pr.author_name}`} className="author-link">{pr.author_name}</Link></strong>
                   <span className="comment-date">
                     {new Date(pr.created_at).toLocaleDateString()}
                   </span>
                 </div>
                 <div className="comment-body">
-                  <pre className="markdown-body">{pr.body}</pre>
+                  <Markdown content={pr.body} />
                 </div>
               </div>
             )}
@@ -353,7 +421,7 @@ export default function PullDetailPage() {
             {reviewsQuery.data?.map((rev) => (
               <div key={rev.id} className={`comment-card review-card review-${rev.type}`}>
                 <div className="comment-header">
-                  <strong>{rev.author_name}</strong>
+                  <strong><Link to={`/${rev.author_name}`} className="author-link">{rev.author_name}</Link></strong>
                   <span className={`review-type-badge ${rev.type}`}>
                     {rev.type === "approval"
                       ? "Approved"
@@ -367,7 +435,7 @@ export default function PullDetailPage() {
                 </div>
                 {rev.body && (
                   <div className="comment-body">
-                    <pre className="markdown-body">{rev.body}</pre>
+                    <Markdown content={rev.body} />
                   </div>
                 )}
               </div>
@@ -376,13 +444,13 @@ export default function PullDetailPage() {
             {commentsQuery.data?.map((c) => (
               <div key={c.id} className="comment-card">
                 <div className="comment-header">
-                  <strong>{c.author_name}</strong>
+                  <strong><Link to={`/${c.author_name}`} className="author-link">{c.author_name}</Link></strong>
                   <span className="comment-date">
                     {new Date(c.created_at).toLocaleDateString()}
                   </span>
                 </div>
                 <div className="comment-body">
-                  <pre className="markdown-body">{c.body}</pre>
+                  <Markdown content={c.body} />
                 </div>
               </div>
             ))}

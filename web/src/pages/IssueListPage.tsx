@@ -114,7 +114,7 @@ export default function IssueListPage() {
                 ))}
               </div>
               <div className="issue-meta">
-                #{issue.number} opened by {issue.author_name} on{" "}
+                #{issue.number} opened by <Link to={`/${issue.author_name}`} className="author-link">{issue.author_name}</Link> on{" "}
                 {new Date(issue.created_at).toLocaleDateString()}
                 {issue.priority !== "none" && (
                   <span className={`priority-badge priority-${issue.priority}`}>

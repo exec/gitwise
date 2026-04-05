@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "../stores/auth";
@@ -11,8 +11,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchValue, setSearchValue] = useState("");
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
 
   const handleLogout = async () => {
+    setDropdownOpen(false);
     try {
       await logout();
     } catch {
@@ -55,10 +68,31 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {isAuthenticated && user ? (
             <div className="user-menu">
               <NotificationBell />
-              <span className="username">{user.username}</span>
-              <button className="btn btn-secondary btn-sm" onClick={handleLogout}>
-                Sign out
-              </button>
+              <div className="user-dropdown-wrapper" ref={dropdownRef}>
+                <button
+                  className="username user-dropdown-trigger"
+                  onClick={() => setDropdownOpen((v) => !v)}
+                >
+                  {user.username}
+                </button>
+                {dropdownOpen && (
+                  <div className="user-dropdown">
+                    <Link to={`/${user.username}`} className="user-dropdown-item" onClick={() => setDropdownOpen(false)}>
+                      Your profile
+                    </Link>
+                    <Link to="/settings" className="user-dropdown-item" onClick={() => setDropdownOpen(false)}>
+                      Settings
+                    </Link>
+                    <Link to="/" className="user-dropdown-item" onClick={() => setDropdownOpen(false)}>
+                      Your repos
+                    </Link>
+                    <div className="user-dropdown-divider" />
+                    <button className="user-dropdown-item user-dropdown-signout" onClick={handleLogout}>
+                      Sign out
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             <div className="auth-links">
