@@ -201,6 +201,13 @@ export default function RepoPage() {
                 <option value={currentRef}>{currentRef}</option>
               )}
             </select>
+            <input
+              className="clone-url-input"
+              type="text"
+              readOnly
+              value={`${window.location.origin}/${owner}/${repo}.git`}
+              onFocus={(e) => e.target.select()}
+            />
           </div>
 
           {view === "blob" ? (

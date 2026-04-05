@@ -457,6 +457,9 @@ input:disabled {
 /* ---- Code toolbar ---- */
 
 .code-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 12px;
 }
 
@@ -468,7 +471,25 @@ input:disabled {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   cursor: pointer;
-  min-width: 160px;
+  width: max-content;
+}
+
+.clone-url-input {
+  flex: 1;
+  padding: 6px 12px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  outline: none;
+  cursor: text;
+}
+
+.clone-url-input:focus {
+  border-color: var(--accent);
+  color: var(--text-primary);
 }
 
 .branch-selector:focus {
