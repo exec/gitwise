@@ -34,19 +34,19 @@ interface FacetEntry {
 interface SearchResponse {
   results: SearchResult[];
   facets: {
-    types: FacetEntry[];
-    languages: FacetEntry[];
+    type?: FacetEntry[];
+    language?: FacetEntry[];
   };
   total: number;
 }
 
 const SCOPES = [
   { key: "", label: "All" },
-  { key: "repo", label: "Repos" },
-  { key: "issue", label: "Issues" },
-  { key: "pull", label: "PRs" },
+  { key: "repos", label: "Repos" },
+  { key: "issues", label: "Issues" },
+  { key: "prs", label: "PRs" },
   { key: "code", label: "Code" },
-  { key: "commit", label: "Commits" },
+  { key: "commits", label: "Commits" },
 ];
 
 const LIMIT = 20;
@@ -96,7 +96,7 @@ export default function SearchPage() {
   function getFacetCount(key: string): number | null {
     if (!facets) return null;
     if (key === "") return total;
-    const entry = facets.types.find((f) => f.value === key);
+    const entry = facets?.type?.find((f) => f.value === key);
     return entry?.count ?? 0;
   }
 
@@ -130,11 +130,11 @@ export default function SearchPage() {
             );
           })}
         </ul>
-        {facets && facets.languages.length > 0 && (
+        {facets?.language && facets.language.length > 0 && (
           <>
             <h3 className="search-sidebar-title">Languages</h3>
             <ul className="search-language-list">
-              {facets.languages.map((lang) => (
+              {facets.language.map((lang) => (
                 <li key={lang.value} className="search-language-item">
                   <span>{lang.value}</span>
                   <span className="search-scope-count">{lang.count}</span>
@@ -164,7 +164,7 @@ export default function SearchPage() {
           <div key={`${result.type}-${result.id}`} className={`search-result search-result-${result.type}`}>
             {result.type === "repo" && <RepoResult result={result} />}
             {result.type === "issue" && <IssueResult result={result} />}
-            {result.type === "pull" && <PullResult result={result} />}
+            {result.type === "pr" && <PullResult result={result} />}
             {result.type === "code" && <CodeResult result={result} />}
             {result.type === "commit" && <CommitResult result={result} />}
           </div>
