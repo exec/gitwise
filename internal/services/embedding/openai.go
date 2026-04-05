@@ -74,7 +74,7 @@ func (p *OpenAIProvider) Embed(ctx context.Context, texts []string) ([][]float32
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
