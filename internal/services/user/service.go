@@ -373,6 +373,23 @@ func (s *Service) SetPinnedRepos(ctx context.Context, userID uuid.UUID, repoIDs 
 		return ErrTooManyPins
 	}
 
+	// Validate all repos are accessible to this user (public or owned)
+	if len(repoIDs) > 0 {
+		var invalidCount int
+		err := s.db.QueryRow(ctx, `
+			SELECT COUNT(*) FROM unnest($1::uuid[]) AS rid(id)
+			WHERE NOT EXISTS (
+				SELECT 1 FROM repositories r
+				WHERE r.id = rid.id AND (r.visibility = 'public' OR r.owner_id = $2)
+			)`, repoIDs, userID).Scan(&invalidCount)
+		if err != nil {
+			return fmt.Errorf("validate pinned repos: %w", err)
+		}
+		if invalidCount > 0 {
+			return fmt.Errorf("%w: one or more repos are not accessible", ErrInvalidInput)
+		}
+	}
+
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
