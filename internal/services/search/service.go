@@ -92,7 +92,7 @@ func (s *Service) searchRepos(ctx context.Context, query string, userID *uuid.UU
 
 	if userID != nil {
 		rows, err = s.db.Query(ctx, `
-			SELECT id, name, description,
+			SELECT r.id, r.name, r.description,
 				COALESCE(u.username, '') AS owner_name,
 				ts_rank(to_tsvector('english', r.name || ' ' || r.description), plainto_tsquery('english', $1)) +
 				similarity(r.name, $1) AS score
@@ -106,7 +106,7 @@ func (s *Service) searchRepos(ctx context.Context, query string, userID *uuid.UU
 		`, query, limit, offset, *userID)
 	} else {
 		rows, err = s.db.Query(ctx, `
-			SELECT id, name, description,
+			SELECT r.id, r.name, r.description,
 				COALESCE(u.username, '') AS owner_name,
 				ts_rank(to_tsvector('english', r.name || ' ' || r.description), plainto_tsquery('english', $1)) +
 				similarity(r.name, $1) AS score

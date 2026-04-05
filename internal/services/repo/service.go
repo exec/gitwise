@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -265,6 +266,18 @@ func (s *Service) ListPublic(ctx context.Context, limit int) ([]models.Repositor
 }
 
 func (s *Service) Update(ctx context.Context, repoID uuid.UUID, req models.UpdateRepoRequest) (*models.Repository, error) {
+	// Look up old name/owner for git directory rename
+	var oldName, ownerName string
+	if req.Name != nil {
+		err := s.db.QueryRow(ctx, `
+			SELECT r.name, u.username FROM repositories r
+			JOIN users u ON r.owner_id = u.id
+			WHERE r.id = $1`, repoID).Scan(&oldName, &ownerName)
+		if err != nil {
+			return nil, fmt.Errorf("lookup repo for rename: %w", err)
+		}
+	}
+
 	setClauses := []string{"updated_at = now()"}
 	args := []any{repoID}
 	argIdx := 2
@@ -327,6 +340,16 @@ func (s *Service) Update(ctx context.Context, repoID uuid.UUID, req models.Updat
 	if err != nil {
 		return nil, fmt.Errorf("update repo: %w", err)
 	}
+
+	// Rename git directory on disk if name changed
+	if req.Name != nil && *req.Name != oldName {
+		oldPath := s.git.RepoPath(ownerName, oldName)
+		newPath := s.git.RepoPath(ownerName, *req.Name)
+		if renameErr := os.Rename(oldPath, newPath); renameErr != nil {
+			slog.Error("failed to rename git directory", "old", oldPath, "new", newPath, "error", renameErr)
+		}
+	}
+
 	return repo, nil
 }
 

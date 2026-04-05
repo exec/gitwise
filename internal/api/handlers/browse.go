@@ -41,11 +41,7 @@ func (h *BrowseHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := h.git.ListTree(owner, repoName, ref, treePath)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "resolve ref") {
-			writeError(w, http.StatusNotFound, "not_found", "path or ref not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "server_error", "failed to list tree")
+		writeError(w, http.StatusNotFound, "not_found", "path or ref not found")
 		return
 	}
 
@@ -128,11 +124,7 @@ func (h *BrowseHandler) ListCommits(w http.ResponseWriter, r *http.Request) {
 
 	commits, hasMore, err := h.git.ListCommits(owner, repoName, ref, page, perPage)
 	if err != nil {
-		if strings.Contains(err.Error(), "resolve ref") {
-			writeError(w, http.StatusNotFound, "not_found", "ref not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "server_error", "failed to list commits")
+		writeError(w, http.StatusNotFound, "not_found", "ref not found")
 		return
 	}
 
@@ -179,7 +171,8 @@ func (h *BrowseHandler) ListBranches(w http.ResponseWriter, r *http.Request) {
 
 	branches, err := h.git.ListBranches(owner, repoName)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "server_error", "failed to list branches")
+		// Empty repos have no branches — return empty array instead of 500
+		writeJSON(w, http.StatusOK, []any{})
 		return
 	}
 
