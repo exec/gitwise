@@ -134,12 +134,15 @@ func (s *Server) initServices() {
 	// Activity service
 	s.activitySvc = activity.NewService(s.db)
 
+	// Webhook service (before handlers that depend on it)
+	s.webhookSvc = webhook.NewService(s.db)
+
 	// Handlers
 	s.authHandler = handlers.NewAuthHandler(s.userSvc, s.sessions)
 	s.repoHandler = handlers.NewRepoHandler(s.repoSvc)
 	s.browseHandler = handlers.NewBrowseHandler(s.repoSvc, s.gitSvc)
-	s.issueHandler = handlers.NewIssueHandler(s.repoSvc, s.issueSvc, s.commentSvc)
-	s.pullHandler = handlers.NewPullHandler(s.repoSvc, s.pullSvc, s.reviewSvc, s.commentSvc)
+	s.issueHandler = handlers.NewIssueHandler(s.repoSvc, s.issueSvc, s.commentSvc, s.webhookSvc)
+	s.pullHandler = handlers.NewPullHandler(s.repoSvc, s.pullSvc, s.reviewSvc, s.commentSvc, s.webhookSvc)
 	s.labelHandler = handlers.NewLabelHandler(s.repoSvc, s.labelSvc)
 	s.milestoneHandler = handlers.NewMilestoneHandler(s.repoSvc, s.milestoneSvc)
 	s.notifHandler = handlers.NewNotificationHandler(s.notifSvc)
@@ -164,8 +167,6 @@ func (s *Server) initServices() {
 	s.orgSvc = org.NewService(s.db)
 	s.orgHandler = handlers.NewOrgHandler(s.orgSvc)
 
-	// Webhook service
-	s.webhookSvc = webhook.NewService(s.db)
 	s.webhookHandler = handlers.NewWebhookHandler(s.repoSvc, s.webhookSvc)
 
 	// Git HTTP protocol

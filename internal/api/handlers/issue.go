@@ -12,16 +12,18 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/comment"
 	"github.com/gitwise-io/gitwise/internal/services/issue"
 	"github.com/gitwise-io/gitwise/internal/services/repo"
+	"github.com/gitwise-io/gitwise/internal/services/webhook"
 )
 
 type IssueHandler struct {
 	repos    *repo.Service
 	issues   *issue.Service
 	comments *comment.Service
+	webhooks *webhook.Service
 }
 
-func NewIssueHandler(repos *repo.Service, issues *issue.Service, comments *comment.Service) *IssueHandler {
-	return &IssueHandler{repos: repos, issues: issues, comments: comments}
+func NewIssueHandler(repos *repo.Service, issues *issue.Service, comments *comment.Service, webhooks *webhook.Service) *IssueHandler {
+	return &IssueHandler{repos: repos, issues: issues, comments: comments, webhooks: webhooks}
 }
 
 func (h *IssueHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +56,13 @@ func (h *IssueHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to create issue")
 		return
 	}
+
+	go h.webhooks.Dispatch(r.Context(), repository.ID, "issue.opened", map[string]any{
+		"issue":      map[string]any{"number": iss.Number, "title": iss.Title},
+		"repository": repository.Name,
+		"owner":      owner,
+		"sender":     iss.AuthorName,
+	})
 
 	writeJSON(w, http.StatusCreated, iss)
 }
@@ -154,6 +163,8 @@ func (h *IssueHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	oldStatus := iss.Status
+
 	iss, err = h.issues.Update(r.Context(), repository.ID, number, req)
 	if errors.Is(err, issue.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "issue not found")
@@ -166,6 +177,19 @@ func (h *IssueHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to update issue")
 		return
+	}
+
+	if req.Status != nil && *req.Status != oldStatus {
+		eventType := "issue.closed"
+		if *req.Status == "open" {
+			eventType = "issue.opened"
+		}
+		go h.webhooks.Dispatch(r.Context(), repository.ID, eventType, map[string]any{
+			"issue":      map[string]any{"number": iss.Number, "title": iss.Title},
+			"repository": repository.Name,
+			"owner":      owner,
+			"sender":     iss.AuthorName,
+		})
 	}
 
 	writeJSON(w, http.StatusOK, iss)
@@ -217,6 +241,14 @@ func (h *IssueHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to create comment")
 		return
 	}
+
+	go h.webhooks.Dispatch(r.Context(), repository.ID, "comment.created", map[string]any{
+		"comment":    map[string]any{"body": c.Body},
+		"issue":      map[string]any{"number": iss.Number, "title": iss.Title},
+		"repository": repository.Name,
+		"owner":      owner,
+		"sender":     c.AuthorName,
+	})
 
 	writeJSON(w, http.StatusCreated, c)
 }

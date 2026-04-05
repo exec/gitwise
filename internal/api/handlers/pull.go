@@ -13,6 +13,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/pull"
 	"github.com/gitwise-io/gitwise/internal/services/repo"
 	"github.com/gitwise-io/gitwise/internal/services/review"
+	"github.com/gitwise-io/gitwise/internal/services/webhook"
 )
 
 type PullHandler struct {
@@ -20,10 +21,11 @@ type PullHandler struct {
 	pulls    *pull.Service
 	reviews  *review.Service
 	comments *comment.Service
+	webhooks *webhook.Service
 }
 
-func NewPullHandler(repos *repo.Service, pulls *pull.Service, reviews *review.Service, comments *comment.Service) *PullHandler {
-	return &PullHandler{repos: repos, pulls: pulls, reviews: reviews, comments: comments}
+func NewPullHandler(repos *repo.Service, pulls *pull.Service, reviews *review.Service, comments *comment.Service, webhooks *webhook.Service) *PullHandler {
+	return &PullHandler{repos: repos, pulls: pulls, reviews: reviews, comments: comments, webhooks: webhooks}
 }
 
 func (h *PullHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +66,13 @@ func (h *PullHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to create pull request")
 		return
 	}
+
+	go h.webhooks.Dispatch(r.Context(), repository.ID, "pr.opened", map[string]any{
+		"pull_request": map[string]any{"number": pr.Number, "title": pr.Title, "head_branch": pr.SourceBranch, "base_branch": pr.TargetBranch},
+		"repository":   repository.Name,
+		"owner":        owner,
+		"sender":       pr.AuthorName,
+	})
 
 	writeJSON(w, http.StatusCreated, pr)
 }
@@ -164,6 +173,8 @@ func (h *PullHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	oldStatus := existingPR.Status
+
 	pr, err := h.pulls.Update(r.Context(), repository.ID, number, req)
 	if errors.Is(err, pull.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "pull request not found")
@@ -176,6 +187,19 @@ func (h *PullHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to update pull request")
 		return
+	}
+
+	if req.Status != nil && *req.Status != oldStatus {
+		eventType := "pr.closed"
+		if *req.Status == "open" {
+			eventType = "pr.opened"
+		}
+		go h.webhooks.Dispatch(r.Context(), repository.ID, eventType, map[string]any{
+			"pull_request": map[string]any{"number": pr.Number, "title": pr.Title, "head_branch": pr.SourceBranch, "base_branch": pr.TargetBranch},
+			"repository":   repository.Name,
+			"owner":        owner,
+			"sender":       pr.AuthorName,
+		})
 	}
 
 	writeJSON(w, http.StatusOK, pr)
@@ -243,6 +267,13 @@ func (h *PullHandler) Merge(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to merge pull request")
 		return
 	}
+
+	go h.webhooks.Dispatch(r.Context(), repository.ID, "pr.merged", map[string]any{
+		"pull_request": map[string]any{"number": pr.Number, "title": pr.Title, "head_branch": pr.SourceBranch, "base_branch": pr.TargetBranch},
+		"repository":   repository.Name,
+		"owner":        owner,
+		"sender":       pr.MergedByName,
+	})
 
 	writeJSON(w, http.StatusOK, pr)
 }
@@ -327,6 +358,14 @@ func (h *PullHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to create review")
 		return
 	}
+
+	go h.webhooks.Dispatch(r.Context(), repository.ID, "review.submitted", map[string]any{
+		"review":       map[string]any{"state": rev.Type, "body": rev.Body},
+		"pull_request": map[string]any{"number": pr.Number, "title": pr.Title},
+		"repository":   repository.Name,
+		"owner":        owner,
+		"sender":       rev.AuthorName,
+	})
 
 	writeJSON(w, http.StatusCreated, rev)
 }
@@ -469,6 +508,14 @@ func (h *PullHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to create comment")
 		return
 	}
+
+	go h.webhooks.Dispatch(r.Context(), repository.ID, "comment.created", map[string]any{
+		"comment":      map[string]any{"body": c.Body},
+		"pull_request": map[string]any{"number": pr.Number, "title": pr.Title},
+		"repository":   repository.Name,
+		"owner":        owner,
+		"sender":       c.AuthorName,
+	})
 
 	writeJSON(w, http.StatusCreated, c)
 }
