@@ -2,11 +2,11 @@ package activity
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/gitwise-io/gitwise/internal/pagination"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -70,16 +70,16 @@ func (s *Service) ListByRepo(ctx context.Context, repoID uuid.UUID, cursor strin
 	argIdx := 2
 
 	if cursor != "" {
-		cursorTime, err := decodeCursor(cursor)
+		cursorTime, cursorID, err := pagination.DecodeCursor(cursor)
 		if err != nil {
 			return nil, "", fmt.Errorf("invalid cursor: %w", err)
 		}
-		query += fmt.Sprintf(` AND e.created_at < $%d`, argIdx)
-		args = append(args, cursorTime)
-		argIdx++
+		query += fmt.Sprintf(` AND (e.created_at, e.id) < ($%d, $%d)`, argIdx, argIdx+1)
+		args = append(args, cursorTime, cursorID)
+		argIdx += 2
 	}
 
-	query += ` ORDER BY e.created_at DESC`
+	query += ` ORDER BY e.created_at DESC, e.id DESC`
 	query += fmt.Sprintf(` LIMIT $%d`, argIdx)
 	args = append(args, limit+1)
 
@@ -105,16 +105,16 @@ func (s *Service) ListByUser(ctx context.Context, userID uuid.UUID, cursor strin
 	argIdx := 2
 
 	if cursor != "" {
-		cursorTime, err := decodeCursor(cursor)
+		cursorTime, cursorID, err := pagination.DecodeCursor(cursor)
 		if err != nil {
 			return nil, "", fmt.Errorf("invalid cursor: %w", err)
 		}
-		query += fmt.Sprintf(` AND e.created_at < $%d`, argIdx)
-		args = append(args, cursorTime)
-		argIdx++
+		query += fmt.Sprintf(` AND (e.created_at, e.id) < ($%d, $%d)`, argIdx, argIdx+1)
+		args = append(args, cursorTime, cursorID)
+		argIdx += 2
 	}
 
-	query += ` ORDER BY e.created_at DESC`
+	query += ` ORDER BY e.created_at DESC, e.id DESC`
 	query += fmt.Sprintf(` LIMIT $%d`, argIdx)
 	args = append(args, limit+1)
 
@@ -154,20 +154,9 @@ func (s *Service) queryEvents(ctx context.Context, query string, args []any, lim
 	var nextCursor string
 	if len(events) > limit {
 		events = events[:limit]
-		nextCursor = encodeCursor(events[limit-1].CreatedAt)
+		last := events[limit-1]
+		nextCursor = pagination.EncodeCursor(last.CreatedAt, last.ID)
 	}
 
 	return events, nextCursor, nil
-}
-
-func encodeCursor(t time.Time) string {
-	return base64.StdEncoding.EncodeToString([]byte(t.Format(time.RFC3339Nano)))
-}
-
-func decodeCursor(cursor string) (time.Time, error) {
-	b, err := base64.StdEncoding.DecodeString(cursor)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return time.Parse(time.RFC3339Nano, string(b))
 }
