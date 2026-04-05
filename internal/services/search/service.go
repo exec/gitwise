@@ -120,6 +120,9 @@ func (s *Service) searchRepos(ctx context.Context, query string, limit, offset i
 			Score:   math.Round(score*1000) / 1000,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate repo rows: %w", err)
+	}
 
 	total, err := s.countRepos(ctx, query)
 	if err != nil {
@@ -209,6 +212,9 @@ func (s *Service) searchIssues(ctx context.Context, query string, repoID *uuid.U
 			},
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate issue rows: %w", err)
+	}
 
 	return &SearchResponse{
 		Results: coalesce(results),
@@ -283,6 +289,9 @@ func (s *Service) searchPRs(ctx context.Context, query string, repoID *uuid.UUID
 			},
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pr rows: %w", err)
+	}
 
 	return &SearchResponse{
 		Results: coalesce(results),
@@ -355,6 +364,9 @@ func (s *Service) searchCommits(ctx context.Context, query string, repoID *uuid.
 			},
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate commit rows: %w", err)
+	}
 
 	return &SearchResponse{
 		Results: coalesce(results),
@@ -364,21 +376,26 @@ func (s *Service) searchCommits(ctx context.Context, query string, repoID *uuid.
 }
 
 func (s *Service) searchCode(ctx context.Context, query string, repoID *uuid.UUID, language string, limit, offset int) (*SearchResponse, error) {
+	if len(query) < 3 {
+		return &SearchResponse{Results: []SearchResult{}, Facets: map[string][]Facet{}}, nil
+	}
+
 	var rows pgx.Rows
 	var err error
 
-	args := []any{query, limit, offset}
+	escaped := escapeLike(query)
+	args := []any{escaped, limit, offset, query}
 	qb := `
 		SELECT cf.id, cf.path, cf.content, cf.language,
 			COALESCE(u.username, '') AS owner_name,
 			r.name AS repo_name,
-			similarity(cf.content, $1) AS score
+			similarity(cf.content, $4) AS score
 		FROM code_files cf
 		JOIN repositories r ON cf.repo_id = r.id
 		LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
 		WHERE cf.content ILIKE '%' || $1 || '%'`
 
-	paramIdx := 4
+	paramIdx := 5
 	if repoID != nil {
 		qb += fmt.Sprintf(" AND cf.repo_id = $%d", paramIdx)
 		args = append(args, *repoID)
@@ -421,6 +438,9 @@ func (s *Service) searchCode(ctx context.Context, query string, repoID *uuid.UUI
 			},
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate code rows: %w", err)
+	}
 
 	// Language facets for code scope
 	facets := map[string][]Facet{}
@@ -440,20 +460,21 @@ func (s *Service) codeLangFacets(ctx context.Context, query string, repoID *uuid
 	var rows pgx.Rows
 	var err error
 
+	escaped := escapeLike(query)
 	if repoID != nil {
 		rows, err = s.db.Query(ctx, `
 			SELECT language, count(*) AS cnt
 			FROM code_files
 			WHERE content ILIKE '%' || $1 || '%' AND repo_id = $2 AND language != ''
 			GROUP BY language ORDER BY cnt DESC LIMIT 20
-		`, query, *repoID)
+		`, escaped, *repoID)
 	} else {
 		rows, err = s.db.Query(ctx, `
 			SELECT language, count(*) AS cnt
 			FROM code_files
 			WHERE content ILIKE '%' || $1 || '%' AND language != ''
 			GROUP BY language ORDER BY cnt DESC LIMIT 20
-		`, query)
+		`, escaped)
 	}
 	if err != nil {
 		return nil, err
@@ -468,6 +489,9 @@ func (s *Service) codeLangFacets(ctx context.Context, query string, repoID *uuid
 			return nil, err
 		}
 		facets = append(facets, Facet{Value: lang, Count: count})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate lang facet rows: %w", err)
 	}
 	return facets, nil
 }
@@ -508,6 +532,7 @@ func (s *Service) searchAll(ctx context.Context, req SearchRequest) (*SearchResp
 
 	var allResults []SearchResult
 	typeCounts := map[string]int{}
+	totalSum := 0
 
 	for i := 0; i < 5; i++ {
 		sr := <-ch
@@ -515,6 +540,7 @@ func (s *Service) searchAll(ctx context.Context, req SearchRequest) (*SearchResp
 			slog.Warn("search scope failed", "error", sr.err)
 			continue
 		}
+		totalSum += sr.resp.Total
 		for _, r := range sr.resp.Results {
 			typeCounts[r.Type]++
 			allResults = append(allResults, r)
@@ -543,7 +569,7 @@ func (s *Service) searchAll(ctx context.Context, req SearchRequest) (*SearchResp
 	return &SearchResponse{
 		Results: coalesce(allResults),
 		Facets:  facets,
-		Total:   len(allResults),
+		Total:   totalSum,
 	}, nil
 }
 
@@ -751,6 +777,13 @@ func coalesce(results []SearchResult) []SearchResult {
 		return []SearchResult{}
 	}
 	return results
+}
+
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
 }
 
 func sortByScore(results []SearchResult) {
