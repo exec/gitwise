@@ -28,6 +28,8 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.UserID = middleware.GetUserID(r.Context())
+
 	resp, err := h.searchSvc.Search(r.Context(), req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "search failed")

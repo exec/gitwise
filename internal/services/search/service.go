@@ -33,6 +33,7 @@ type SearchRequest struct {
 	Language string     `json:"language,omitempty"`
 	Limit    int        `json:"limit"`
 	Offset   int        `json:"offset"`
+	UserID   *uuid.UUID `json:"-"`
 }
 
 type SearchResult struct {
@@ -69,15 +70,15 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (*SearchRespons
 
 	switch req.Scope {
 	case "repos":
-		return s.searchRepos(ctx, req.Query, req.Limit, req.Offset)
+		return s.searchRepos(ctx, req.Query, req.UserID, req.Limit, req.Offset)
 	case "issues":
-		return s.searchIssues(ctx, req.Query, req.RepoID, req.Limit, req.Offset)
+		return s.searchIssues(ctx, req.Query, req.UserID, req.RepoID, req.Limit, req.Offset)
 	case "prs":
-		return s.searchPRs(ctx, req.Query, req.RepoID, req.Limit, req.Offset)
+		return s.searchPRs(ctx, req.Query, req.UserID, req.RepoID, req.Limit, req.Offset)
 	case "commits":
-		return s.searchCommits(ctx, req.Query, req.RepoID, req.Limit, req.Offset)
+		return s.searchCommits(ctx, req.Query, req.UserID, req.RepoID, req.Limit, req.Offset)
 	case "code":
-		return s.searchCode(ctx, req.Query, req.RepoID, req.Language, req.Limit, req.Offset)
+		return s.searchCode(ctx, req.Query, req.UserID, req.RepoID, req.Language, req.Limit, req.Offset)
 	case "all", "":
 		return s.searchAll(ctx, req)
 	default:
@@ -85,19 +86,39 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (*SearchRespons
 	}
 }
 
-func (s *Service) searchRepos(ctx context.Context, query string, limit, offset int) (*SearchResponse, error) {
-	rows, err := s.db.Query(ctx, `
-		SELECT id, name, description,
-			COALESCE(u.username, '') AS owner_name,
-			ts_rank(to_tsvector('english', r.name || ' ' || r.description), plainto_tsquery('english', $1)) +
-			similarity(r.name, $1) AS score
-		FROM repositories r
-		LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
-		WHERE to_tsvector('english', r.name || ' ' || r.description) @@ plainto_tsquery('english', $1)
-		   OR similarity(r.name, $1) > 0.1
-		ORDER BY score DESC
-		LIMIT $2 OFFSET $3
-	`, query, limit, offset)
+func (s *Service) searchRepos(ctx context.Context, query string, userID *uuid.UUID, limit, offset int) (*SearchResponse, error) {
+	var rows pgx.Rows
+	var err error
+
+	if userID != nil {
+		rows, err = s.db.Query(ctx, `
+			SELECT id, name, description,
+				COALESCE(u.username, '') AS owner_name,
+				ts_rank(to_tsvector('english', r.name || ' ' || r.description), plainto_tsquery('english', $1)) +
+				similarity(r.name, $1) AS score
+			FROM repositories r
+			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			WHERE (to_tsvector('english', r.name || ' ' || r.description) @@ plainto_tsquery('english', $1)
+			   OR similarity(r.name, $1) > 0.1)
+			  AND (r.visibility = 'public' OR r.owner_id = $4)
+			ORDER BY score DESC
+			LIMIT $2 OFFSET $3
+		`, query, limit, offset, *userID)
+	} else {
+		rows, err = s.db.Query(ctx, `
+			SELECT id, name, description,
+				COALESCE(u.username, '') AS owner_name,
+				ts_rank(to_tsvector('english', r.name || ' ' || r.description), plainto_tsquery('english', $1)) +
+				similarity(r.name, $1) AS score
+			FROM repositories r
+			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			WHERE (to_tsvector('english', r.name || ' ' || r.description) @@ plainto_tsquery('english', $1)
+			   OR similarity(r.name, $1) > 0.1)
+			  AND r.visibility = 'public'
+			ORDER BY score DESC
+			LIMIT $2 OFFSET $3
+		`, query, limit, offset)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("search repos: %w", err)
 	}
@@ -124,7 +145,7 @@ func (s *Service) searchRepos(ctx context.Context, query string, limit, offset i
 		return nil, fmt.Errorf("iterate repo rows: %w", err)
 	}
 
-	total, err := s.countRepos(ctx, query)
+	total, err := s.countRepos(ctx, query, userID)
 	if err != nil {
 		slog.Warn("count repos failed", "error", err)
 	}
@@ -136,21 +157,32 @@ func (s *Service) searchRepos(ctx context.Context, query string, limit, offset i
 	}, nil
 }
 
-func (s *Service) countRepos(ctx context.Context, query string) (int, error) {
+func (s *Service) countRepos(ctx context.Context, query string, userID *uuid.UUID) (int, error) {
 	var count int
-	err := s.db.QueryRow(ctx, `
-		SELECT count(*) FROM repositories r
-		WHERE to_tsvector('english', r.name || ' ' || r.description) @@ plainto_tsquery('english', $1)
-		   OR similarity(r.name, $1) > 0.1
-	`, query).Scan(&count)
+	var err error
+	if userID != nil {
+		err = s.db.QueryRow(ctx, `
+			SELECT count(*) FROM repositories r
+			WHERE (to_tsvector('english', r.name || ' ' || r.description) @@ plainto_tsquery('english', $1)
+			   OR similarity(r.name, $1) > 0.1)
+			  AND (r.visibility = 'public' OR r.owner_id = $2)
+		`, query, *userID).Scan(&count)
+	} else {
+		err = s.db.QueryRow(ctx, `
+			SELECT count(*) FROM repositories r
+			WHERE (to_tsvector('english', r.name || ' ' || r.description) @@ plainto_tsquery('english', $1)
+			   OR similarity(r.name, $1) > 0.1)
+			  AND r.visibility = 'public'
+		`, query).Scan(&count)
+	}
 	return count, err
 }
 
-func (s *Service) searchIssues(ctx context.Context, query string, repoID *uuid.UUID, limit, offset int) (*SearchResponse, error) {
+func (s *Service) searchIssues(ctx context.Context, query string, userID *uuid.UUID, repoID *uuid.UUID, limit, offset int) (*SearchResponse, error) {
 	var rows pgx.Rows
 	var err error
 
-	if repoID != nil {
+	if repoID != nil && userID != nil {
 		rows, err = s.db.Query(ctx, `
 			SELECT i.id, i.number, i.title, i.body, i.status,
 				COALESCE(u.username, '') AS owner_name,
@@ -164,9 +196,45 @@ func (s *Service) searchIssues(ctx context.Context, query string, repoID *uuid.U
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
 			WHERE i.repo_id = $4
 			  AND (to_tsvector('english', i.title) || to_tsvector('english', i.body)) @@ plainto_tsquery('english', $1)
+			  AND (r.visibility = 'public' OR r.owner_id = $5)
+			ORDER BY score DESC
+			LIMIT $2 OFFSET $3
+		`, query, limit, offset, *repoID, *userID)
+	} else if repoID != nil {
+		rows, err = s.db.Query(ctx, `
+			SELECT i.id, i.number, i.title, i.body, i.status,
+				COALESCE(u.username, '') AS owner_name,
+				r.name AS repo_name,
+				ts_rank(
+					to_tsvector('english', i.title) || to_tsvector('english', i.body),
+					plainto_tsquery('english', $1)
+				) AS score
+			FROM issues i
+			JOIN repositories r ON i.repo_id = r.id
+			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			WHERE i.repo_id = $4
+			  AND (to_tsvector('english', i.title) || to_tsvector('english', i.body)) @@ plainto_tsquery('english', $1)
+			  AND r.visibility = 'public'
 			ORDER BY score DESC
 			LIMIT $2 OFFSET $3
 		`, query, limit, offset, *repoID)
+	} else if userID != nil {
+		rows, err = s.db.Query(ctx, `
+			SELECT i.id, i.number, i.title, i.body, i.status,
+				COALESCE(u.username, '') AS owner_name,
+				r.name AS repo_name,
+				ts_rank(
+					to_tsvector('english', i.title) || to_tsvector('english', i.body),
+					plainto_tsquery('english', $1)
+				) AS score
+			FROM issues i
+			JOIN repositories r ON i.repo_id = r.id
+			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			WHERE (to_tsvector('english', i.title) || to_tsvector('english', i.body)) @@ plainto_tsquery('english', $1)
+			  AND (r.visibility = 'public' OR r.owner_id = $4)
+			ORDER BY score DESC
+			LIMIT $2 OFFSET $3
+		`, query, limit, offset, *userID)
 	} else {
 		rows, err = s.db.Query(ctx, `
 			SELECT i.id, i.number, i.title, i.body, i.status,
@@ -180,6 +248,7 @@ func (s *Service) searchIssues(ctx context.Context, query string, repoID *uuid.U
 			JOIN repositories r ON i.repo_id = r.id
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
 			WHERE (to_tsvector('english', i.title) || to_tsvector('english', i.body)) @@ plainto_tsquery('english', $1)
+			  AND r.visibility = 'public'
 			ORDER BY score DESC
 			LIMIT $2 OFFSET $3
 		`, query, limit, offset)
@@ -223,11 +292,11 @@ func (s *Service) searchIssues(ctx context.Context, query string, repoID *uuid.U
 	}, nil
 }
 
-func (s *Service) searchPRs(ctx context.Context, query string, repoID *uuid.UUID, limit, offset int) (*SearchResponse, error) {
+func (s *Service) searchPRs(ctx context.Context, query string, userID *uuid.UUID, repoID *uuid.UUID, limit, offset int) (*SearchResponse, error) {
 	var rows pgx.Rows
 	var err error
 
-	if repoID != nil {
+	if repoID != nil && userID != nil {
 		rows, err = s.db.Query(ctx, `
 			SELECT p.id, p.number, p.title, p.body, p.status,
 				COALESCE(u.username, '') AS owner_name,
@@ -241,9 +310,45 @@ func (s *Service) searchPRs(ctx context.Context, query string, repoID *uuid.UUID
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
 			WHERE p.repo_id = $4
 			  AND (to_tsvector('english', p.title) || to_tsvector('english', p.body)) @@ plainto_tsquery('english', $1)
+			  AND (r.visibility = 'public' OR r.owner_id = $5)
+			ORDER BY score DESC
+			LIMIT $2 OFFSET $3
+		`, query, limit, offset, *repoID, *userID)
+	} else if repoID != nil {
+		rows, err = s.db.Query(ctx, `
+			SELECT p.id, p.number, p.title, p.body, p.status,
+				COALESCE(u.username, '') AS owner_name,
+				r.name AS repo_name,
+				ts_rank(
+					to_tsvector('english', p.title) || to_tsvector('english', p.body),
+					plainto_tsquery('english', $1)
+				) AS score
+			FROM pull_requests p
+			JOIN repositories r ON p.repo_id = r.id
+			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			WHERE p.repo_id = $4
+			  AND (to_tsvector('english', p.title) || to_tsvector('english', p.body)) @@ plainto_tsquery('english', $1)
+			  AND r.visibility = 'public'
 			ORDER BY score DESC
 			LIMIT $2 OFFSET $3
 		`, query, limit, offset, *repoID)
+	} else if userID != nil {
+		rows, err = s.db.Query(ctx, `
+			SELECT p.id, p.number, p.title, p.body, p.status,
+				COALESCE(u.username, '') AS owner_name,
+				r.name AS repo_name,
+				ts_rank(
+					to_tsvector('english', p.title) || to_tsvector('english', p.body),
+					plainto_tsquery('english', $1)
+				) AS score
+			FROM pull_requests p
+			JOIN repositories r ON p.repo_id = r.id
+			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			WHERE (to_tsvector('english', p.title) || to_tsvector('english', p.body)) @@ plainto_tsquery('english', $1)
+			  AND (r.visibility = 'public' OR r.owner_id = $4)
+			ORDER BY score DESC
+			LIMIT $2 OFFSET $3
+		`, query, limit, offset, *userID)
 	} else {
 		rows, err = s.db.Query(ctx, `
 			SELECT p.id, p.number, p.title, p.body, p.status,
@@ -257,6 +362,7 @@ func (s *Service) searchPRs(ctx context.Context, query string, repoID *uuid.UUID
 			JOIN repositories r ON p.repo_id = r.id
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
 			WHERE (to_tsvector('english', p.title) || to_tsvector('english', p.body)) @@ plainto_tsquery('english', $1)
+			  AND r.visibility = 'public'
 			ORDER BY score DESC
 			LIMIT $2 OFFSET $3
 		`, query, limit, offset)
@@ -300,11 +406,11 @@ func (s *Service) searchPRs(ctx context.Context, query string, repoID *uuid.UUID
 	}, nil
 }
 
-func (s *Service) searchCommits(ctx context.Context, query string, repoID *uuid.UUID, limit, offset int) (*SearchResponse, error) {
+func (s *Service) searchCommits(ctx context.Context, query string, userID *uuid.UUID, repoID *uuid.UUID, limit, offset int) (*SearchResponse, error) {
 	var rows pgx.Rows
 	var err error
 
-	if repoID != nil {
+	if repoID != nil && userID != nil {
 		rows, err = s.db.Query(ctx, `
 			SELECT c.sha, c.message, c.author_email,
 				COALESCE(u.username, '') AS owner_name,
@@ -315,9 +421,39 @@ func (s *Service) searchCommits(ctx context.Context, query string, repoID *uuid.
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
 			WHERE c.repo_id = $4
 			  AND to_tsvector('english', c.message) @@ plainto_tsquery('english', $1)
+			  AND (r.visibility = 'public' OR r.owner_id = $5)
+			ORDER BY score DESC
+			LIMIT $2 OFFSET $3
+		`, query, limit, offset, *repoID, *userID)
+	} else if repoID != nil {
+		rows, err = s.db.Query(ctx, `
+			SELECT c.sha, c.message, c.author_email,
+				COALESCE(u.username, '') AS owner_name,
+				r.name AS repo_name,
+				ts_rank(to_tsvector('english', c.message), plainto_tsquery('english', $1)) AS score
+			FROM commit_metadata c
+			JOIN repositories r ON c.repo_id = r.id
+			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			WHERE c.repo_id = $4
+			  AND to_tsvector('english', c.message) @@ plainto_tsquery('english', $1)
+			  AND r.visibility = 'public'
 			ORDER BY score DESC
 			LIMIT $2 OFFSET $3
 		`, query, limit, offset, *repoID)
+	} else if userID != nil {
+		rows, err = s.db.Query(ctx, `
+			SELECT c.sha, c.message, c.author_email,
+				COALESCE(u.username, '') AS owner_name,
+				r.name AS repo_name,
+				ts_rank(to_tsvector('english', c.message), plainto_tsquery('english', $1)) AS score
+			FROM commit_metadata c
+			JOIN repositories r ON c.repo_id = r.id
+			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			WHERE to_tsvector('english', c.message) @@ plainto_tsquery('english', $1)
+			  AND (r.visibility = 'public' OR r.owner_id = $4)
+			ORDER BY score DESC
+			LIMIT $2 OFFSET $3
+		`, query, limit, offset, *userID)
 	} else {
 		rows, err = s.db.Query(ctx, `
 			SELECT c.sha, c.message, c.author_email,
@@ -328,6 +464,7 @@ func (s *Service) searchCommits(ctx context.Context, query string, repoID *uuid.
 			JOIN repositories r ON c.repo_id = r.id
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
 			WHERE to_tsvector('english', c.message) @@ plainto_tsquery('english', $1)
+			  AND r.visibility = 'public'
 			ORDER BY score DESC
 			LIMIT $2 OFFSET $3
 		`, query, limit, offset)
@@ -375,7 +512,7 @@ func (s *Service) searchCommits(ctx context.Context, query string, repoID *uuid.
 	}, nil
 }
 
-func (s *Service) searchCode(ctx context.Context, query string, repoID *uuid.UUID, language string, limit, offset int) (*SearchResponse, error) {
+func (s *Service) searchCode(ctx context.Context, query string, userID *uuid.UUID, repoID *uuid.UUID, language string, limit, offset int) (*SearchResponse, error) {
 	if len(query) < 3 {
 		return &SearchResponse{Results: []SearchResult{}, Facets: map[string][]Facet{}}, nil
 	}
@@ -396,6 +533,13 @@ func (s *Service) searchCode(ctx context.Context, query string, repoID *uuid.UUI
 		WHERE cf.content ILIKE '%' || $1 || '%'`
 
 	paramIdx := 5
+	if userID != nil {
+		qb += fmt.Sprintf(" AND (r.visibility = 'public' OR r.owner_id = $%d)", paramIdx)
+		args = append(args, *userID)
+		paramIdx++
+	} else {
+		qb += " AND r.visibility = 'public'"
+	}
 	if repoID != nil {
 		qb += fmt.Sprintf(" AND cf.repo_id = $%d", paramIdx)
 		args = append(args, *repoID)
@@ -444,7 +588,7 @@ func (s *Service) searchCode(ctx context.Context, query string, repoID *uuid.UUI
 
 	// Language facets for code scope
 	facets := map[string][]Facet{}
-	langFacets, err := s.codeLangFacets(ctx, query, repoID)
+	langFacets, err := s.codeLangFacets(ctx, query, userID, repoID)
 	if err == nil && len(langFacets) > 0 {
 		facets["language"] = langFacets
 	}
@@ -456,26 +600,35 @@ func (s *Service) searchCode(ctx context.Context, query string, repoID *uuid.UUI
 	}, nil
 }
 
-func (s *Service) codeLangFacets(ctx context.Context, query string, repoID *uuid.UUID) ([]Facet, error) {
+func (s *Service) codeLangFacets(ctx context.Context, query string, userID *uuid.UUID, repoID *uuid.UUID) ([]Facet, error) {
 	var rows pgx.Rows
 	var err error
 
 	escaped := escapeLike(query)
-	if repoID != nil {
-		rows, err = s.db.Query(ctx, `
-			SELECT language, count(*) AS cnt
-			FROM code_files
-			WHERE content ILIKE '%' || $1 || '%' AND repo_id = $2 AND language != ''
-			GROUP BY language ORDER BY cnt DESC LIMIT 20
-		`, escaped, *repoID)
+	args := []any{escaped}
+	qb := `
+		SELECT cf.language, count(*) AS cnt
+		FROM code_files cf
+		JOIN repositories r ON cf.repo_id = r.id
+		WHERE cf.content ILIKE '%' || $1 || '%' AND cf.language != ''`
+
+	paramIdx := 2
+	if userID != nil {
+		qb += fmt.Sprintf(" AND (r.visibility = 'public' OR r.owner_id = $%d)", paramIdx)
+		args = append(args, *userID)
+		paramIdx++
 	} else {
-		rows, err = s.db.Query(ctx, `
-			SELECT language, count(*) AS cnt
-			FROM code_files
-			WHERE content ILIKE '%' || $1 || '%' AND language != ''
-			GROUP BY language ORDER BY cnt DESC LIMIT 20
-		`, escaped)
+		qb += " AND r.visibility = 'public'"
 	}
+	if repoID != nil {
+		qb += fmt.Sprintf(" AND cf.repo_id = $%d", paramIdx)
+		args = append(args, *repoID)
+		paramIdx++
+	}
+
+	qb += ` GROUP BY cf.language ORDER BY cnt DESC LIMIT 20`
+
+	rows, err = s.db.Query(ctx, qb, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -510,23 +663,23 @@ func (s *Service) searchAll(ctx context.Context, req SearchRequest) (*SearchResp
 	ch := make(chan scopeResult, 5)
 
 	go func() {
-		r, e := s.searchRepos(ctx, req.Query, perScope, 0)
+		r, e := s.searchRepos(ctx, req.Query, req.UserID, perScope, 0)
 		ch <- scopeResult{r, e}
 	}()
 	go func() {
-		r, e := s.searchIssues(ctx, req.Query, req.RepoID, perScope, 0)
+		r, e := s.searchIssues(ctx, req.Query, req.UserID, req.RepoID, perScope, 0)
 		ch <- scopeResult{r, e}
 	}()
 	go func() {
-		r, e := s.searchPRs(ctx, req.Query, req.RepoID, perScope, 0)
+		r, e := s.searchPRs(ctx, req.Query, req.UserID, req.RepoID, perScope, 0)
 		ch <- scopeResult{r, e}
 	}()
 	go func() {
-		r, e := s.searchCommits(ctx, req.Query, req.RepoID, perScope, 0)
+		r, e := s.searchCommits(ctx, req.Query, req.UserID, req.RepoID, perScope, 0)
 		ch <- scopeResult{r, e}
 	}()
 	go func() {
-		r, e := s.searchCode(ctx, req.Query, req.RepoID, req.Language, perScope, 0)
+		r, e := s.searchCode(ctx, req.Query, req.UserID, req.RepoID, req.Language, perScope, 0)
 		ch <- scopeResult{r, e}
 	}()
 
