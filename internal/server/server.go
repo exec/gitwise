@@ -34,6 +34,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/review"
 	"github.com/gitwise-io/gitwise/internal/services/embedding"
 	"github.com/gitwise-io/gitwise/internal/services/commit"
+	"github.com/gitwise-io/gitwise/internal/services/oauth"
 	"github.com/gitwise-io/gitwise/internal/services/search"
 	"github.com/gitwise-io/gitwise/internal/services/user"
 	"github.com/gitwise-io/gitwise/internal/services/webhook"
@@ -139,8 +140,15 @@ func (s *Server) initServices() {
 	// Webhook service (before handlers that depend on it)
 	s.webhookSvc = webhook.NewService(s.db)
 
+	// OAuth service (nil if not configured)
+	var oauthSvc *oauth.Service
+	if s.cfg.GitHubOAuth.Enabled {
+		oauthSvc = oauth.NewService(s.cfg.GitHubOAuth, s.cfg.BaseURL, s.rdb)
+		slog.Info("github oauth enabled")
+	}
+
 	// Handlers
-	s.authHandler = handlers.NewAuthHandler(s.userSvc, s.sessions)
+	s.authHandler = handlers.NewAuthHandler(s.userSvc, s.sessions, oauthSvc)
 	s.repoHandler = handlers.NewRepoHandler(s.repoSvc)
 	s.browseHandler = handlers.NewBrowseHandler(s.repoSvc, s.gitSvc)
 	s.issueHandler = handlers.NewIssueHandler(s.repoSvc, s.issueSvc, s.commentSvc, s.webhookSvc)
@@ -228,6 +236,9 @@ func (s *Server) setupRoutes() {
 		r.Post("/auth/login", s.authHandler.Login)
 		r.Post("/auth/logout", s.authHandler.Logout)
 		r.Get("/auth/me", s.authHandler.Me)
+		r.Get("/auth/providers", s.authHandler.ListProviders)
+		r.Get("/auth/github", s.authHandler.GitHubLogin)
+		r.Get("/auth/github/callback", s.authHandler.GitHubCallback)
 
 		// API tokens (authenticated)
 		r.Route("/auth/tokens", func(r chi.Router) {

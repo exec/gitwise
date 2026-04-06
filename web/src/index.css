@@ -288,6 +288,39 @@ input:disabled {
   color: var(--text-secondary);
 }
 
+.btn-github {
+  background: #24292e;
+  color: #fff;
+  border: 1px solid rgba(240, 246, 252, 0.1);
+  text-decoration: none;
+}
+
+.btn-github:hover {
+  background: #2f363d;
+  color: #fff;
+  text-decoration: none;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  margin: 20px 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.auth-divider span {
+  padding: 0 12px;
+}
+
 /* ---- Error banner ---- */
 
 .error-banner {

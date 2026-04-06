@@ -80,6 +80,101 @@ func (s *Service) Create(ctx context.Context, req models.CreateUserRequest) (*mo
 	return user, nil
 }
 
+// FindOrCreateByOAuth looks up an existing user linked to the given OAuth
+// provider+providerID. If none exists, it looks for a user with a matching
+// email and links the account. If no user exists at all, it creates one
+// (with NULL password) and links the OAuth account.
+func (s *Service) FindOrCreateByOAuth(ctx context.Context, provider, providerID, email, username, fullName, avatarURL, accessToken string) (*models.User, error) {
+	email = strings.ToLower(email)
+	username = strings.ToLower(username)
+
+	// 1. Check if an oauth_account already exists for this provider+id.
+	var existingUserID uuid.UUID
+	err := s.db.QueryRow(ctx, `
+		SELECT user_id FROM oauth_accounts
+		WHERE provider = $1 AND provider_id = $2`, provider, providerID,
+	).Scan(&existingUserID)
+	if err == nil {
+		// Update access token.
+		s.db.Exec(ctx, `UPDATE oauth_accounts SET access_token = $1
+			WHERE provider = $2 AND provider_id = $3`, accessToken, provider, providerID)
+		return s.GetByID(ctx, existingUserID)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("lookup oauth account: %w", err)
+	}
+
+	// 2. Check if a user with this email already exists (link account).
+	existingUser := &models.User{}
+	err = s.db.QueryRow(ctx, `
+		SELECT id, username, email, full_name, avatar_url, bio, is_admin, created_at, updated_at
+		FROM users WHERE email = $1`, email,
+	).Scan(
+		&existingUser.ID, &existingUser.Username, &existingUser.Email,
+		&existingUser.FullName, &existingUser.AvatarURL, &existingUser.Bio,
+		&existingUser.IsAdmin, &existingUser.CreatedAt, &existingUser.UpdatedAt,
+	)
+	if err == nil {
+		// Link oauth account to existing user.
+		_, err = s.db.Exec(ctx, `
+			INSERT INTO oauth_accounts (id, user_id, provider, provider_id, access_token, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6)`,
+			uuid.New(), existingUser.ID, provider, providerID, accessToken, time.Now(),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("link oauth account: %w", err)
+		}
+		return existingUser, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("lookup user by email: %w", err)
+	}
+
+	// 3. Create a new user. Resolve username conflicts by appending numeric suffix.
+	finalUsername := username
+	for i := 1; ; i++ {
+		var exists bool
+		err = s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)`, finalUsername).Scan(&exists)
+		if err != nil {
+			return nil, fmt.Errorf("check username: %w", err)
+		}
+		if !exists {
+			break
+		}
+		finalUsername = fmt.Sprintf("%s%d", username, i)
+	}
+
+	now := time.Now()
+	newUser := &models.User{
+		ID:        uuid.New(),
+		Username:  finalUsername,
+		Email:     email,
+		FullName:  fullName,
+		AvatarURL: avatarURL,
+	}
+
+	_, err = s.db.Exec(ctx, `
+		INSERT INTO users (id, username, email, password, full_name, avatar_url, created_at, updated_at)
+		VALUES ($1, $2, $3, NULL, $4, $5, $6, $6)`,
+		newUser.ID, newUser.Username, newUser.Email, newUser.FullName, newUser.AvatarURL, now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create oauth user: %w", err)
+	}
+
+	// Link oauth account.
+	_, err = s.db.Exec(ctx, `
+		INSERT INTO oauth_accounts (id, user_id, provider, provider_id, access_token, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		uuid.New(), newUser.ID, provider, providerID, accessToken, now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create oauth link: %w", err)
+	}
+
+	return newUser, nil
+}
+
 func (s *Service) Authenticate(ctx context.Context, login, password string) (*models.User, error) {
 	login = strings.ToLower(login)
 	user := &models.User{}

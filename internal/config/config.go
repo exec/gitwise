@@ -8,14 +8,22 @@ import (
 )
 
 type Config struct {
-	Port      int
-	Host      string
-	Database  DatabaseConfig
-	Redis     RedisConfig
-	Git       GitConfig
-	Frontend  FrontendConfig
-	Embedding EmbeddingConfig
-	Secret    string
+	Port        int
+	Host        string
+	Database    DatabaseConfig
+	Redis       RedisConfig
+	Git         GitConfig
+	Frontend    FrontendConfig
+	Embedding   EmbeddingConfig
+	Secret      string
+	BaseURL     string
+	GitHubOAuth GitHubOAuthConfig
+}
+
+type GitHubOAuthConfig struct {
+	ClientID     string
+	ClientSecret string
+	Enabled      bool // true if both ClientID and ClientSecret are non-empty
 }
 
 type EmbeddingConfig struct {
@@ -62,10 +70,19 @@ type FrontendConfig struct {
 }
 
 func Load() *Config {
+	githubID := envStr("GITWISE_GITHUB_CLIENT_ID", "")
+	githubSecret := envStr("GITWISE_GITHUB_CLIENT_SECRET", "")
+
 	return &Config{
 		Port:   envInt("GITWISE_PORT", 3000),
 		Host:   envStr("GITWISE_HOST", "0.0.0.0"),
 		Secret: envStr("GITWISE_SECRET", "change-me-in-production"),
+		BaseURL: envStr("GITWISE_BASE_URL", "http://localhost:3000"),
+		GitHubOAuth: GitHubOAuthConfig{
+			ClientID:     githubID,
+			ClientSecret: githubSecret,
+			Enabled:      githubID != "" && githubSecret != "",
+		},
 		Database: DatabaseConfig{
 			Host:     envStr("GITWISE_DB_HOST", "localhost"),
 			Port:     envInt("GITWISE_DB_PORT", 5432),
