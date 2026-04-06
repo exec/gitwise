@@ -59,11 +59,12 @@ func (s *Service) ListByRepo(ctx context.Context, repoID uuid.UUID, cursor strin
 	query := `
 		SELECT e.id, e.repo_id, e.actor_id, u.username,
 		       e.event_type, e.ref_type, e.ref_id, e.ref_number,
-		       e.payload, r.name, ru.username, e.created_at
+		       e.payload, r.name, COALESCE(ru.username, ro.name), e.created_at
 		FROM activity_events e
 		JOIN users u ON u.id = e.actor_id
 		LEFT JOIN repositories r ON r.id = e.repo_id
-		LEFT JOIN users ru ON ru.id = r.owner_id
+		LEFT JOIN users ru ON ru.id = r.owner_id AND r.owner_type = 'user'
+		LEFT JOIN organizations ro ON ro.id = r.owner_id AND r.owner_type = 'org'
 		WHERE e.repo_id = $1`
 
 	args := []any{repoID}
@@ -94,11 +95,12 @@ func (s *Service) ListByUser(ctx context.Context, userID uuid.UUID, cursor strin
 	query := `
 		SELECT e.id, e.repo_id, e.actor_id, u.username,
 		       e.event_type, e.ref_type, e.ref_id, e.ref_number,
-		       e.payload, r.name, ru.username, e.created_at
+		       e.payload, r.name, COALESCE(ru.username, ro.name), e.created_at
 		FROM activity_events e
 		JOIN users u ON u.id = e.actor_id
 		LEFT JOIN repositories r ON r.id = e.repo_id
-		LEFT JOIN users ru ON ru.id = r.owner_id
+		LEFT JOIN users ru ON ru.id = r.owner_id AND r.owner_type = 'user'
+		LEFT JOIN organizations ro ON ro.id = r.owner_id AND r.owner_type = 'org'
 		WHERE e.actor_id = $1`
 
 	args := []any{userID}

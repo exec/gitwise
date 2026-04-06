@@ -353,11 +353,12 @@ func (h *AdminHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 		       d.attempts, d.duration_ms, d.delivered_at,
 		       w.url AS webhook_url,
 		       COALESCE(r.name, '') AS repo_name,
-		       COALESCE(u.username, '') AS owner_name
+		       COALESCE(u.username, o.name, '') AS owner_name
 		FROM webhook_deliveries d
 		JOIN webhooks w ON w.id = d.webhook_id
 		LEFT JOIN repositories r ON r.id = w.repo_id
-		LEFT JOIN users u ON u.id = r.owner_id
+		LEFT JOIN users u ON u.id = r.owner_id AND r.owner_type = 'user'
+		LEFT JOIN organizations o ON o.id = r.owner_id AND r.owner_type = 'org'
 		ORDER BY d.delivered_at DESC
 		LIMIT $1`, limit,
 	)

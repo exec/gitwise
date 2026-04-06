@@ -9,15 +9,17 @@ import (
 
 	"github.com/gitwise-io/gitwise/internal/middleware"
 	"github.com/gitwise-io/gitwise/internal/models"
+	"github.com/gitwise-io/gitwise/internal/services/org"
 	"github.com/gitwise-io/gitwise/internal/services/repo"
 )
 
 type RepoHandler struct {
-	repos *repo.Service
+	repos  *repo.Service
+	orgSvc *org.Service
 }
 
-func NewRepoHandler(repos *repo.Service) *RepoHandler {
-	return &RepoHandler{repos: repos}
+func NewRepoHandler(repos *repo.Service, orgSvc *org.Service) *RepoHandler {
+	return &RepoHandler{repos: repos, orgSvc: orgSvc}
 }
 
 func (h *RepoHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -52,6 +54,19 @@ func (h *RepoHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateRepoRequest
 	if handleDecodeError(w, decodeJSON(r, &req)) {
 		return
+	}
+
+	// If creating under an org, verify the user is a member
+	if req.OrgName != "" && h.orgSvc != nil {
+		isMember, err := h.orgSvc.IsMember(r.Context(), req.OrgName, *userID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "server_error", "failed to check org membership")
+			return
+		}
+		if !isMember {
+			writeError(w, http.StatusForbidden, "forbidden", "you must be a member of the organization to create a repository")
+			return
+		}
 	}
 
 	repository, err := h.repos.Create(r.Context(), *userID, req)

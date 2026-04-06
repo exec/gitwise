@@ -29,12 +29,24 @@ var (
 
 var usernameRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9._-]{0,37}[a-zA-Z0-9])?$`)
 
+// OrgNameChecker can check if an org name exists. Used to prevent
+// username/org-name collisions without a circular import.
+type OrgNameChecker interface {
+	NameExists(ctx context.Context, name string) (bool, error)
+}
+
 type Service struct {
-	db *pgxpool.Pool
+	db       *pgxpool.Pool
+	orgCheck OrgNameChecker
 }
 
 func NewService(db *pgxpool.Pool) *Service {
 	return &Service{db: db}
+}
+
+// SetOrgNameChecker sets the org name checker for cross-namespace validation.
+func (s *Service) SetOrgNameChecker(checker OrgNameChecker) {
+	s.orgCheck = checker
 }
 
 func (s *Service) Create(ctx context.Context, req models.CreateUserRequest) (*models.User, error) {
@@ -49,6 +61,17 @@ func (s *Service) Create(ctx context.Context, req models.CreateUserRequest) (*mo
 	}
 	if !strings.Contains(req.Email, "@") {
 		return nil, fmt.Errorf("%w: invalid email address", ErrInvalidInput)
+	}
+
+	// Check for org name collision
+	if s.orgCheck != nil {
+		exists, err := s.orgCheck.NameExists(ctx, req.Username)
+		if err != nil {
+			return nil, fmt.Errorf("check org name conflict: %w", err)
+		}
+		if exists {
+			return nil, ErrDuplicateUser
+		}
 	}
 
 	hash, err := hashPassword(req.Password)
@@ -470,12 +493,14 @@ func (s *Service) GetContributions(ctx context.Context, userID uuid.UUID, from, 
 func (s *Service) ListPinnedRepos(ctx context.Context, userID uuid.UUID) ([]models.PinnedRepo, error) {
 	query := `
 		SELECT p.position,
-		       r.id, r.owner_id, u.username, r.name, r.description, r.default_branch,
+		       r.id, r.owner_id, COALESCE(u.username, o.name) AS owner_name,
+		       r.name, r.description, r.default_branch,
 		       r.visibility, r.language_stats, r.topics, r.stars_count, r.forks_count,
 		       r.created_at, r.updated_at
 		FROM pinned_repos p
 		JOIN repositories r ON r.id = p.repo_id
-		JOIN users u ON u.id = r.owner_id
+		LEFT JOIN users u ON u.id = r.owner_id AND r.owner_type = 'user'
+		LEFT JOIN organizations o ON o.id = r.owner_id AND r.owner_type = 'org'
 		WHERE p.user_id = $1
 		ORDER BY p.position`
 

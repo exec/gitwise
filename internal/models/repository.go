@@ -32,6 +32,7 @@ type CreateRepoRequest struct {
 	DefaultBranch string   `json:"default_branch"`
 	Topics        []string `json:"topics"`
 	AutoInit      bool     `json:"auto_init"`
+	OrgName       string   `json:"org_name,omitempty"` // if set, create under this org
 }
 
 type UpdateRepoRequest struct {

@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useParams } from "react-router-dom";
 import { useAuthStore } from "./stores/auth";
 import Layout from "./components/Layout";
 import LandingPage from "./pages/LandingPage";
@@ -6,6 +6,7 @@ import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import DashboardPage from "./pages/DashboardPage";
 import NewRepoPage from "./pages/NewRepoPage";
+import NewOrgPage from "./pages/NewOrgPage";
 import RepoPage from "./pages/RepoPage";
 import IssueListPage from "./pages/IssueListPage";
 import IssueDetailPage from "./pages/IssueDetailPage";
@@ -16,7 +17,7 @@ import NewPullPage from "./pages/NewPullPage";
 import SearchPage from "./pages/SearchPage";
 import ProfilePage from "./pages/ProfilePage";
 import EditProfilePage from "./pages/EditProfilePage";
-import OrgPage from "./pages/OrgPage";
+import OwnerPage from "./pages/OwnerPage";
 import UserSettingsPage from "./pages/UserSettingsPage";
 import RepoSettingsPage from "./pages/RepoSettingsPage";
 import AdminPage from "./pages/AdminPage";
@@ -44,6 +45,11 @@ function HomePage() {
   return isAuthenticated ? <DashboardPage /> : <LandingPage />;
 }
 
+function OrgRedirect() {
+  const { name } = useParams();
+  return <Navigate to={`/${name}`} replace />;
+}
+
 export default function App() {
   return (
     <Layout>
@@ -59,6 +65,14 @@ export default function App() {
             </RequireAuth>
           }
         />
+        <Route
+          path="/new/org"
+          element={
+            <RequireAuth>
+              <NewOrgPage />
+            </RequireAuth>
+          }
+        />
 
         {/* Admin panel (secret path, requires admin) */}
         <Route
@@ -69,6 +83,9 @@ export default function App() {
             </RequireAdminGuard>
           }
         />
+
+        {/* Legacy org route redirect */}
+        <Route path="/orgs/:name" element={<OrgRedirect />} />
 
         {/* Search */}
         <Route path="/search" element={<SearchPage />} />
@@ -91,9 +108,6 @@ export default function App() {
           }
         />
 
-        {/* Organizations */}
-        <Route path="/orgs/:name" element={<OrgPage />} />
-
         {/* Repo settings (before catch-all repo route) */}
         <Route
           path="/:owner/:repo/settings"
@@ -107,8 +121,8 @@ export default function App() {
         {/* Repo pages */}
         <Route path="/:owner/:repo" element={<RepoPage />} />
 
-        {/* Profile (must be after /:owner/:repo so two-segment paths match first) */}
-        <Route path="/:username" element={<ProfilePage />} />
+        {/* Shared /:owner namespace — resolves to ProfilePage or OrgPage */}
+        <Route path="/:owner" element={<OwnerPage />} />
         <Route path="/:owner/:repo/tree/:ref/*" element={<RepoPage />} />
         <Route path="/:owner/:repo/blob/:ref/*" element={<RepoPage />} />
         <Route path="/:owner/:repo/blame/:ref/*" element={<RepoPage />} />

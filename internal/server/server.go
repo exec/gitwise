@@ -171,10 +171,14 @@ func (s *Server) initServices() {
 		slog.Info("github oauth enabled")
 	}
 
+	// Org service (before handlers that depend on it)
+	s.orgSvc = org.NewService(s.db)
+	s.userSvc.SetOrgNameChecker(s.orgSvc)
+
 	// Handlers
 	s.authHandler = handlers.NewAuthHandler(s.userSvc, s.sessions, oauthSvc, s.totpSvc)
 	s.twoFactorHandler = handlers.NewTwoFactorHandler(s.totpSvc, s.userSvc, s.sessions)
-	s.repoHandler = handlers.NewRepoHandler(s.repoSvc)
+	s.repoHandler = handlers.NewRepoHandler(s.repoSvc, s.orgSvc)
 	s.browseHandler = handlers.NewBrowseHandler(s.repoSvc, s.gitSvc)
 	s.issueHandler = handlers.NewIssueHandler(s.repoSvc, s.issueSvc, s.commentSvc, s.webhookSvc, s.notifSvc, s.userSvc)
 	s.pullHandler = handlers.NewPullHandler(s.repoSvc, s.pullSvc, s.reviewSvc, s.commentSvc, s.webhookSvc, s.notifSvc, s.userSvc)
@@ -210,9 +214,8 @@ func (s *Server) initServices() {
 	s.searchSvc.SetEmbeddingService(s.embeddingSvc)
 	s.searchHandler = handlers.NewSearchHandler(s.searchSvc, s.repoSvc)
 
-	// Org service
-	s.orgSvc = org.NewService(s.db)
-	s.orgHandler = handlers.NewOrgHandler(s.orgSvc)
+	// Org handler
+	s.orgHandler = handlers.NewOrgHandler(s.orgSvc, s.userSvc)
 
 	// Team service
 	s.teamSvc = team.NewService(s.db)
@@ -269,8 +272,9 @@ func (s *Server) initServices() {
 		var repoID uuid.UUID
 		err := s.db.QueryRow(context.Background(), `
 			SELECT r.id FROM repositories r
-			JOIN users u ON r.owner_id = u.id
-			WHERE u.username = $1 AND r.name = $2`, owner, repoName).Scan(&repoID)
+			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
+			WHERE LOWER(COALESCE(u.username, o.name)) = $1 AND r.name = $2`, owner, repoName).Scan(&repoID)
 		if err != nil {
 			slog.Error("post-receive: repo lookup failed", "owner", owner, "repo", repoName, "error", err)
 			return
@@ -454,10 +458,17 @@ func (s *Server) setupRoutes() {
 		r.With(middleware.RequireAuth).Put("/user/pinned-repos", s.profileHandler.SetPinnedRepos)
 
 		// Organizations
+		r.With(middleware.RequireAuth).Post("/orgs", s.orgHandler.Create)
 		r.Route("/orgs/{name}", func(r chi.Router) {
 			r.Get("/", s.orgHandler.Get)
+			r.With(middleware.RequireAuth).Put("/", s.orgHandler.Update)
+			r.With(middleware.RequireAuth).Delete("/", s.orgHandler.Delete)
 			r.Get("/members", s.orgHandler.ListMembers)
 			r.Get("/repos", s.orgHandler.ListRepos)
+
+			// Member management
+			r.With(middleware.RequireAuth).Put("/members/{username}", s.orgHandler.AddOrUpdateMember)
+			r.With(middleware.RequireAuth).Delete("/members/{username}", s.orgHandler.RemoveMember)
 
 			// Teams
 			r.Get("/teams", s.teamHandler.List)
@@ -476,6 +487,12 @@ func (s *Server) setupRoutes() {
 				r.With(middleware.RequireAuth).Delete("/repos/{repo}", s.teamHandler.RemoveRepo)
 			})
 		})
+
+		// User's organizations (authenticated)
+		r.With(middleware.RequireAuth).Get("/user/orgs", s.orgHandler.ListUserOrgs)
+
+		// Namespace resolution
+		r.Get("/resolve/{name}", s.orgHandler.Resolve)
 
 		// Search
 		r.Get("/search", s.searchHandler.Search)

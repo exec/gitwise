@@ -58,3 +58,37 @@ type OrgTeamRepo struct {
 	Description string    `json:"description"`
 	Visibility  string    `json:"visibility"`
 }
+
+// CreateOrgRequest is the request body for creating an organization.
+type CreateOrgRequest struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Description string `json:"description"`
+}
+
+// UpdateOrgRequest is the request body for updating an organization.
+type UpdateOrgRequest struct {
+	DisplayName *string `json:"display_name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	AvatarURL   *string `json:"avatar_url,omitempty"`
+}
+
+// OrgMemberRequest is the request body for adding/updating a member.
+type OrgMemberRequest struct {
+	Role string `json:"role"`
+}
+
+// OrgMembership represents a user's membership in an organization (for listing user's orgs).
+type OrgMembership struct {
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	DisplayName string    `json:"display_name"`
+	AvatarURL   string    `json:"avatar_url"`
+	Role        string    `json:"role"`
+}
+
+// NamespaceResult represents the resolution of a /:name namespace lookup.
+type NamespaceResult struct {
+	Type string `json:"type"` // "user" or "org"
+	Data any    `json:"data"`
+}

@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { get, post, put, del } from "../lib/api";
+import { get, post, put, del, patch } from "../lib/api";
 import { avatarUrl } from "../lib/avatar";
 import { useAuthStore } from "../stores/auth";
 
@@ -74,10 +74,11 @@ const PERM_LABELS: Record<string, string> = {
   admin: "Admin",
 };
 
-type OrgTab = "repos" | "members" | "teams";
+type OrgTab = "repos" | "members" | "teams" | "settings";
 
 export default function OrgPage() {
-  const { name } = useParams();
+  const params = useParams();
+  const name = params.name || params.owner;
   const [activeTab, setActiveTab] = useState<OrgTab>("repos");
   const user = useAuthStore((s) => s.user);
 
@@ -183,6 +184,14 @@ export default function OrgPage() {
             <span className="org-tab-count">{teamsQuery.data.length}</span>
           )}
         </button>
+        {isOwner && (
+          <button
+            className={`org-tab ${activeTab === "settings" ? "org-tab-active" : ""}`}
+            onClick={() => setActiveTab("settings")}
+          >
+            Settings
+          </button>
+        )}
       </div>
 
       {/* Tab content */}
@@ -203,6 +212,12 @@ export default function OrgPage() {
           isOwner={!!isOwner}
           orgMembers={membersQuery.data ?? []}
           orgRepos={reposQuery.data ?? []}
+        />
+      )}
+      {activeTab === "settings" && isOwner && (
+        <SettingsTab
+          org={org}
+          members={membersQuery.data ?? []}
         />
       )}
     </div>
@@ -707,6 +722,258 @@ function TeamDetail({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function SettingsTab({
+  org,
+  members,
+}: {
+  org: Organization;
+  members: OrgMember[];
+}) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+
+  // General settings
+  const [displayName, setDisplayName] = useState(org.display_name || "");
+  const [description, setDescription] = useState(org.description || "");
+  const [avatarUrlVal, setAvatarUrlVal] = useState(org.avatar_url || "");
+  const [generalError, setGeneralError] = useState("");
+  const [generalSuccess, setGeneralSuccess] = useState("");
+
+  const updateMut = useMutation({
+    mutationFn: () =>
+      put(`/orgs/${org.name}`, {
+        display_name: displayName,
+        description,
+        avatar_url: avatarUrlVal,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org", org.name] });
+      queryClient.invalidateQueries({ queryKey: ["resolve", org.name] });
+      setGeneralSuccess("Organization updated.");
+      setGeneralError("");
+    },
+    onError: (err) => {
+      setGeneralError(
+        err instanceof Error ? err.message : "Failed to update organization"
+      );
+      setGeneralSuccess("");
+    },
+  });
+
+  // Member management
+  const [newMember, setNewMember] = useState("");
+  const [newMemberRole, setNewMemberRole] = useState("member");
+  const [memberError, setMemberError] = useState("");
+
+  const addMemberMut = useMutation({
+    mutationFn: () =>
+      put(`/orgs/${org.name}/members/${newMember}`, { role: newMemberRole }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-members", org.name] });
+      setNewMember("");
+      setNewMemberRole("member");
+      setMemberError("");
+    },
+    onError: (err) => {
+      setMemberError(
+        err instanceof Error ? err.message : "Failed to add member"
+      );
+    },
+  });
+
+  const removeMemberMut = useMutation({
+    mutationFn: (username: string) =>
+      del(`/orgs/${org.name}/members/${username}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-members", org.name] });
+      setMemberError("");
+    },
+    onError: (err) => {
+      setMemberError(
+        err instanceof Error ? err.message : "Failed to remove member"
+      );
+    },
+  });
+
+  const changeRoleMut = useMutation({
+    mutationFn: ({
+      username,
+      role,
+    }: {
+      username: string;
+      role: string;
+    }) => put(`/orgs/${org.name}/members/${username}`, { role }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["org-members", org.name] });
+      setMemberError("");
+    },
+    onError: (err) => {
+      setMemberError(
+        err instanceof Error ? err.message : "Failed to change role"
+      );
+    },
+  });
+
+  // Delete org
+  const deleteMut = useMutation({
+    mutationFn: () => del(`/orgs/${org.name}`),
+    onSuccess: () => {
+      navigate("/");
+    },
+  });
+
+  return (
+    <div className="org-settings">
+      {/* General */}
+      <section className="settings-section">
+        <h3>General</h3>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            updateMut.mutate();
+          }}
+        >
+          <div className="form-group">
+            <label htmlFor="org-display-name">Display name</label>
+            <input
+              id="org-display-name"
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="org-description">Description</label>
+            <textarea
+              id="org-description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="org-avatar-url">Avatar URL</label>
+            <input
+              id="org-avatar-url"
+              type="text"
+              value={avatarUrlVal}
+              onChange={(e) => setAvatarUrlVal(e.target.value)}
+              placeholder="https://..."
+            />
+          </div>
+          {generalError && <p className="error-text">{generalError}</p>}
+          {generalSuccess && <p className="success-text">{generalSuccess}</p>}
+          <button
+            type="submit"
+            className="btn btn-primary btn-sm"
+            disabled={updateMut.isPending}
+          >
+            {updateMut.isPending ? "Saving..." : "Save changes"}
+          </button>
+        </form>
+      </section>
+
+      {/* Members */}
+      <section className="settings-section">
+        <h3>Members</h3>
+        {memberError && <p className="error-text">{memberError}</p>}
+
+        <div className="settings-members-list">
+          {members.map((m) => (
+            <div key={m.user_id} className="settings-member-row">
+              <Link to={`/${m.username}`} className="settings-member-name">
+                {m.username}
+                {m.full_name && (
+                  <span className="muted"> ({m.full_name})</span>
+                )}
+              </Link>
+              <select
+                value={m.role}
+                onChange={(e) =>
+                  changeRoleMut.mutate({
+                    username: m.username,
+                    role: e.target.value,
+                  })
+                }
+                disabled={changeRoleMut.isPending}
+              >
+                <option value="owner">Owner</option>
+                <option value="member">Member</option>
+              </select>
+              <button
+                className="btn btn-danger btn-xs"
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `Remove ${m.username} from ${org.name}?`
+                    )
+                  ) {
+                    removeMemberMut.mutate(m.username);
+                  }
+                }}
+                disabled={removeMemberMut.isPending}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="settings-add-member">
+          <input
+            type="text"
+            value={newMember}
+            onChange={(e) => setNewMember(e.target.value)}
+            placeholder="Username to add"
+          />
+          <select
+            value={newMemberRole}
+            onChange={(e) => setNewMemberRole(e.target.value)}
+          >
+            <option value="member">Member</option>
+            <option value="owner">Owner</option>
+          </select>
+          <button
+            className="btn btn-primary btn-xs"
+            onClick={() => {
+              if (newMember.trim()) {
+                addMemberMut.mutate();
+              }
+            }}
+            disabled={addMemberMut.isPending || !newMember.trim()}
+          >
+            Add member
+          </button>
+        </div>
+      </section>
+
+      {/* Danger zone */}
+      <section className="settings-section settings-danger-zone">
+        <h3>Danger zone</h3>
+        <p className="muted">
+          Deleting an organization is permanent. All repositories, teams, and
+          members will be removed.
+        </p>
+        <button
+          className="btn btn-danger btn-sm"
+          onClick={() => {
+            if (
+              window.confirm(
+                `Are you sure you want to delete "${org.name}"? This cannot be undone.`
+              )
+            ) {
+              deleteMut.mutate();
+            }
+          }}
+          disabled={deleteMut.isPending}
+        >
+          {deleteMut.isPending ? "Deleting..." : "Delete organization"}
+        </button>
+      </section>
     </div>
   );
 }

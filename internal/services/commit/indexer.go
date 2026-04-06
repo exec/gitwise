@@ -91,9 +91,10 @@ func (idx *Indexer) IndexRepo(ctx context.Context, repoID uuid.UUID, owner, repo
 // IndexAll indexes all repos in the database.
 func (idx *Indexer) IndexAll(ctx context.Context) error {
 	rows, err := idx.db.Query(ctx, `
-		SELECT r.id, u.username, r.name
+		SELECT r.id, COALESCE(u.username, o.name), r.name
 		FROM repositories r
-		JOIN users u ON r.owner_id = u.id`)
+		LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+		LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'`)
 	if err != nil {
 		return fmt.Errorf("list repos: %w", err)
 	}

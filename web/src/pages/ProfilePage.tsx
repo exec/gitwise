@@ -41,7 +41,8 @@ interface Repo {
 }
 
 export default function ProfilePage() {
-  const { username } = useParams();
+  const params = useParams();
+  const username = params.username || params.owner;
   const currentUser = useAuthStore((s) => s.user);
   const isOwnProfile = currentUser?.username === username;
 

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { useMutation } from "@tanstack/react-query";
-import { post, ApiError } from "../lib/api";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { post, get, ApiError } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
 
 interface CreateRepoPayload {
@@ -10,6 +10,7 @@ interface CreateRepoPayload {
   visibility: string;
   default_branch: string;
   auto_init: boolean;
+  org_name?: string;
 }
 
 interface Repo {
@@ -18,15 +19,31 @@ interface Repo {
   name: string;
 }
 
+interface OrgMembership {
+  id: string;
+  name: string;
+  display_name: string;
+  avatar_url: string;
+  role: string;
+}
+
 export default function NewRepoPage() {
   const user = useAuthStore((s) => s.user);
   const navigate = useNavigate();
 
+  const [owner, setOwner] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [visibility, setVisibility] = useState("private");
   const [autoInit, setAutoInit] = useState(true);
   const [error, setError] = useState("");
+
+  const orgsQuery = useQuery({
+    queryKey: ["user-orgs"],
+    queryFn: () =>
+      get<OrgMembership[]>("/user/orgs").then((r) => r.data),
+    enabled: !!user,
+  });
 
   const mutation = useMutation({
     mutationFn: (payload: CreateRepoPayload) =>
@@ -46,13 +63,17 @@ export default function NewRepoPage() {
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     setError("");
-    mutation.mutate({
+    const payload: CreateRepoPayload = {
       name,
       description,
       visibility,
       default_branch: "main",
       auto_init: autoInit,
-    });
+    };
+    if (owner && owner !== user?.username) {
+      payload.org_name = owner;
+    }
+    mutation.mutate(payload);
   };
 
   return (
@@ -62,7 +83,18 @@ export default function NewRepoPage() {
       <form onSubmit={handleSubmit}>
         <div className="form-group">
           <label htmlFor="owner">Owner</label>
-          <input id="owner" type="text" value={user?.username ?? ""} disabled />
+          <select
+            id="owner"
+            value={owner}
+            onChange={(e) => setOwner(e.target.value)}
+          >
+            <option value="">{user?.username ?? ""}</option>
+            {orgsQuery.data?.map((o) => (
+              <option key={o.id} value={o.name}>
+                {o.display_name || o.name}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="form-group">
           <label htmlFor="name">Repository name</label>
