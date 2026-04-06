@@ -137,6 +137,12 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, req models.Creat
 	if !orgNameRe.MatchString(name) {
 		return nil, fmt.Errorf("%w: must be 1-39 alphanumeric characters, hyphens, dots, or underscores", ErrInvalidName)
 	}
+	if len(req.DisplayName) > 100 {
+		return nil, fmt.Errorf("%w: display name must be at most 100 characters", ErrInvalidName)
+	}
+	if len(req.Description) > 1000 {
+		return nil, fmt.Errorf("%w: description must be at most 1000 characters", ErrInvalidName)
+	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -198,11 +204,17 @@ func (s *Service) Update(ctx context.Context, orgName string, req models.UpdateO
 	argIdx := 2
 
 	if req.DisplayName != nil {
+		if len(*req.DisplayName) > 100 {
+			return nil, fmt.Errorf("%w: display name must be at most 100 characters", ErrInvalidName)
+		}
 		setClauses = append(setClauses, fmt.Sprintf("display_name = $%d", argIdx))
 		args = append(args, strings.TrimSpace(*req.DisplayName))
 		argIdx++
 	}
 	if req.Description != nil {
+		if len(*req.Description) > 1000 {
+			return nil, fmt.Errorf("%w: description must be at most 1000 characters", ErrInvalidName)
+		}
 		setClauses = append(setClauses, fmt.Sprintf("description = $%d", argIdx))
 		args = append(args, strings.TrimSpace(*req.Description))
 		argIdx++

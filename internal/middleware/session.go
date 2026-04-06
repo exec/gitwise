@@ -29,11 +29,18 @@ type SessionData struct {
 }
 
 type SessionManager struct {
-	redis *redis.Client
+	redis      *redis.Client
+	secureCookie bool // set Secure flag on cookies (true when behind TLS)
 }
 
 func NewSessionManager(rdb *redis.Client) *SessionManager {
 	return &SessionManager{redis: rdb}
+}
+
+// SetSecureCookie enables the Secure flag on session cookies. This should
+// be set to true when the application is served over HTTPS.
+func (sm *SessionManager) SetSecureCookie(secure bool) {
+	sm.secureCookie = secure
 }
 
 func (sm *SessionManager) Create(ctx context.Context, w http.ResponseWriter, userID uuid.UUID) error {
@@ -55,7 +62,7 @@ func (sm *SessionManager) Create(ctx context.Context, w http.ResponseWriter, use
 		MaxAge:   int(sessionExpiry.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   false, // set true in production behind TLS
+		Secure:   sm.secureCookie,
 	})
 
 	return nil
@@ -96,6 +103,8 @@ func (sm *SessionManager) Destroy(ctx context.Context, w http.ResponseWriter, se
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   sm.secureCookie,
 	})
 	return nil
 }

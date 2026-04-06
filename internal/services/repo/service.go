@@ -41,6 +41,9 @@ func (s *Service) Create(ctx context.Context, ownerID uuid.UUID, req models.Crea
 	if !repoNameRe.MatchString(req.Name) {
 		return nil, ErrInvalidName
 	}
+	if len(req.Description) > 1000 {
+		return nil, fmt.Errorf("%w: description must be at most 1000 characters", ErrInvalidName)
+	}
 
 	if req.Visibility == "" {
 		req.Visibility = "public"
@@ -323,6 +326,9 @@ func (s *Service) Update(ctx context.Context, repoID uuid.UUID, req models.Updat
 		argIdx++
 	}
 	if req.Description != nil {
+		if len(*req.Description) > 1000 {
+			return nil, fmt.Errorf("%w: description must be at most 1000 characters", ErrInvalidName)
+		}
 		setClauses = append(setClauses, fmt.Sprintf("description = $%d", argIdx))
 		args = append(args, *req.Description)
 		argIdx++

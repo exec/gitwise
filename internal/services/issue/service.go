@@ -17,10 +17,13 @@ import (
 	"github.com/gitwise-io/gitwise/internal/pagination"
 )
 
+const maxIssueBody = 100_000 // 100KB max issue body
+
 var (
 	ErrNotFound       = errors.New("issue not found")
 	ErrInvalidTitle   = errors.New("title is required")
 	ErrInvalidStatus  = errors.New("invalid status")
+	ErrBodyTooLong    = errors.New("body exceeds maximum length")
 	ErrForbidden      = errors.New("access denied")
 )
 
@@ -36,6 +39,9 @@ func (s *Service) Create(ctx context.Context, repoID, authorID uuid.UUID, req mo
 	title := strings.TrimSpace(req.Title)
 	if title == "" || len(title) > 500 {
 		return nil, ErrInvalidTitle
+	}
+	if len(req.Body) > maxIssueBody {
+		return nil, ErrBodyTooLong
 	}
 
 	priority := req.Priority
@@ -213,6 +219,9 @@ func (s *Service) Update(ctx context.Context, repoID uuid.UUID, number int, req 
 		argIdx++
 	}
 	if req.Body != nil {
+		if len(*req.Body) > maxIssueBody {
+			return nil, ErrBodyTooLong
+		}
 		setClauses = append(setClauses, "body_history = body_history || jsonb_build_array(jsonb_build_object('body', body, 'edited_at', now()))")
 		setClauses = append(setClauses, fmt.Sprintf("body = $%d", argIdx))
 		args = append(args, *req.Body)

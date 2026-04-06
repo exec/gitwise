@@ -131,6 +131,7 @@ func (s *Server) initServices() {
 
 	// Auth
 	s.sessions = middleware.NewSessionManager(s.rdb)
+	s.sessions.SetSecureCookie(strings.HasPrefix(s.cfg.BaseURL, "https://"))
 	s.auth = middleware.NewAuth(s.sessions, s.userSvc)
 
 	// TOTP 2FA service (nil-safe if key is not configured)
@@ -290,6 +291,7 @@ func (s *Server) setupMiddleware() {
 	s.router.Use(chimw.RealIP)
 	s.router.Use(chimw.Logger)
 	s.router.Use(chimw.Recoverer)
+	s.router.Use(middleware.SecurityHeaders)
 	s.router.Use(corsMiddleware)
 	s.router.Use(middleware.MaxBodySize(1 << 30)) // 1 GB body limit (git pushes can be large)
 	s.router.Use(s.auth.Handler)
@@ -302,15 +304,22 @@ func (s *Server) setupRoutes() {
 	// Git smart HTTP protocol
 	s.router.Handle("/{owner}/{repo}.git/*", s.gitHTTP)
 
+	// Rate limiters
+	authRL := middleware.AuthRateLimit(s.rdb, 10, 1*time.Minute) // 10 req/min for auth endpoints
+
 	// API v1
 	s.router.Route("/api/v1", func(r chi.Router) {
-		// Auth
-		r.Post("/auth/register", s.authHandler.Register)
-		r.Post("/auth/login", s.authHandler.Login)
+		// Apply method-based rate limiting to all API routes:
+		// GET/HEAD: 120 req/min, POST/PUT/PATCH/DELETE: 60 req/min
+		r.Use(middleware.APIRateLimit(s.rdb, 120, 60, 1*time.Minute))
+
+		// Auth (strict rate limit on login/register/2FA — layered on top)
+		r.With(authRL).Post("/auth/register", s.authHandler.Register)
+		r.With(authRL).Post("/auth/login", s.authHandler.Login)
 		r.Post("/auth/logout", s.authHandler.Logout)
 		r.Get("/auth/me", s.authHandler.Me)
 		r.Get("/auth/providers", s.authHandler.ListProviders)
-		r.Post("/auth/verify-2fa", s.twoFactorHandler.Verify2FA)
+		r.With(authRL).Post("/auth/verify-2fa", s.twoFactorHandler.Verify2FA)
 		r.Get("/auth/github", s.authHandler.GitHubLogin)
 		r.Get("/auth/github/callback", s.authHandler.GitHubCallback)
 

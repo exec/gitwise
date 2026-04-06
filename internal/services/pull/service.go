@@ -19,6 +19,8 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/protection"
 )
 
+const maxPRBody = 100_000 // 100KB max PR body
+
 var (
 	ErrNotFound        = errors.New("pull request not found")
 	ErrInvalidTitle    = errors.New("title is required")
@@ -29,6 +31,7 @@ var (
 	ErrAlreadyMerged   = errors.New("pull request is already merged")
 	ErrNotOpen         = errors.New("pull request is not open")
 	ErrMergeFailed     = errors.New("merge failed")
+	ErrBodyTooLong     = errors.New("body exceeds maximum length")
 	ErrForbidden            = errors.New("access denied")
 	ErrInsufficientReviews = errors.New("insufficient approving reviews")
 	ErrLinearRequired      = errors.New("linear history required: use rebase or squash strategy")
@@ -48,6 +51,9 @@ func (s *Service) Create(ctx context.Context, repoID, authorID uuid.UUID, ownerN
 	title := strings.TrimSpace(req.Title)
 	if title == "" || len(title) > 500 {
 		return nil, ErrInvalidTitle
+	}
+	if len(req.Body) > maxPRBody {
+		return nil, ErrBodyTooLong
 	}
 
 	if err := git.ValidateBranchName(req.SourceBranch); err != nil {
@@ -275,6 +281,9 @@ func (s *Service) Update(ctx context.Context, repoID uuid.UUID, number int, req 
 		argIdx++
 	}
 	if req.Body != nil {
+		if len(*req.Body) > maxPRBody {
+			return nil, ErrBodyTooLong
+		}
 		setClauses = append(setClauses, "body_history = body_history || jsonb_build_array(jsonb_build_object('body', body, 'edited_at', now()))")
 		setClauses = append(setClauses, fmt.Sprintf("body = $%d", argIdx))
 		args = append(args, *req.Body)

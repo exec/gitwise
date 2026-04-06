@@ -16,9 +16,12 @@ import (
 	"github.com/gitwise-io/gitwise/internal/pagination"
 )
 
+const maxCommentBody = 100_000 // 100KB max comment body
+
 var (
 	ErrNotFound    = errors.New("comment not found")
 	ErrEmptyBody   = errors.New("comment body is required")
+	ErrBodyTooLong = errors.New("comment body exceeds maximum length")
 	ErrForbidden   = errors.New("access denied")
 )
 
@@ -34,6 +37,9 @@ func (s *Service) Create(ctx context.Context, repoID uuid.UUID, issueID, prID *u
 	body := strings.TrimSpace(req.Body)
 	if body == "" {
 		return nil, ErrEmptyBody
+	}
+	if len(body) > maxCommentBody {
+		return nil, ErrBodyTooLong
 	}
 
 	comment := &models.Comment{
@@ -141,6 +147,9 @@ func (s *Service) Update(ctx context.Context, commentID, authorID uuid.UUID, req
 	body := strings.TrimSpace(req.Body)
 	if body == "" {
 		return nil, ErrEmptyBody
+	}
+	if len(body) > maxCommentBody {
+		return nil, ErrBodyTooLong
 	}
 
 	comment := &models.Comment{}

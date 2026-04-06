@@ -59,7 +59,7 @@ func (s *Service) Create(ctx context.Context, req models.CreateUserRequest) (*mo
 	if len(req.Password) > 128 {
 		return nil, fmt.Errorf("%w: password must be at most 128 characters", ErrInvalidInput)
 	}
-	if !strings.Contains(req.Email, "@") {
+	if !strings.Contains(req.Email, "@") || len(req.Email) > 254 {
 		return nil, fmt.Errorf("%w: invalid email address", ErrInvalidInput)
 	}
 
@@ -312,11 +312,17 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req models.UpdateUse
 	argIdx := 2
 
 	if req.FullName != nil {
+		if len(*req.FullName) > 100 {
+			return nil, fmt.Errorf("%w: full name must be at most 100 characters", ErrInvalidInput)
+		}
 		setClauses = append(setClauses, fmt.Sprintf("full_name = $%d", argIdx))
 		args = append(args, *req.FullName)
 		argIdx++
 	}
 	if req.Bio != nil {
+		if len(*req.Bio) > 500 {
+			return nil, fmt.Errorf("%w: bio must be at most 500 characters", ErrInvalidInput)
+		}
 		setClauses = append(setClauses, fmt.Sprintf("bio = $%d", argIdx))
 		args = append(args, *req.Bio)
 		argIdx++
@@ -347,6 +353,12 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req models.UpdateUse
 
 // CreateToken generates a new API token for a user.
 func (s *Service) CreateToken(ctx context.Context, userID uuid.UUID, req models.CreateTokenRequest) (*models.APIToken, error) {
+	name := strings.TrimSpace(req.Name)
+	if name == "" || len(name) > 100 {
+		return nil, fmt.Errorf("%w: token name must be 1-100 characters", ErrInvalidInput)
+	}
+	req.Name = name
+
 	rawToken := make([]byte, 32)
 	if _, err := rand.Read(rawToken); err != nil {
 		return nil, fmt.Errorf("generate token: %w", err)
