@@ -1,11 +1,19 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/gitwise-io/gitwise/internal/models"
+	"github.com/gitwise-io/gitwise/internal/services/mention"
+	"github.com/gitwise-io/gitwise/internal/services/notification"
+	"github.com/gitwise-io/gitwise/internal/services/user"
 )
 
 // ErrBodyTooLarge is returned when the request body exceeds maxBodySize.
@@ -82,4 +90,41 @@ func WriteUserJSON(w http.ResponseWriter, data any) {
 // WriteReposJSON writes a repos list response.
 func WriteReposJSON(w http.ResponseWriter, data any) {
 	writeJSON(w, http.StatusOK, data)
+}
+
+// processMentions parses @mentions from text and creates a notification for
+// each mentioned user, skipping the author. entityType is "issue" or "pull request".
+func processMentions(ctx context.Context, text string, authorID uuid.UUID, owner, repoName, entityType, entityPath string, number int, authorName string, users *user.Service, notifications *notification.Service) {
+	usernames := mention.Parse(text)
+	if len(usernames) == 0 {
+		return
+	}
+
+	link := fmt.Sprintf("/%s/%s/%s/%d", owner, repoName, entityPath, number)
+	title := fmt.Sprintf("%s mentioned you in %s #%d", authorName, entityType, number)
+
+	// Truncate body for notification preview
+	body := text
+	if len(body) > 500 {
+		body = body[:500] + "..."
+	}
+
+	for _, username := range usernames {
+		mentioned, err := users.GetByUsername(ctx, username)
+		if err != nil {
+			continue
+		}
+		if mentioned.ID == authorID {
+			continue
+		}
+
+		if _, err := notifications.Create(ctx, mentioned.ID, "mention", title, body, link); err != nil {
+			slog.Error("failed to create mention notification",
+				"mentioned_user", username,
+				"author", authorName,
+				"link", link,
+				"error", err,
+			)
+		}
+	}
 }
