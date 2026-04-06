@@ -3,30 +3,38 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/gitwise-io/gitwise/internal/middleware"
 	"github.com/gitwise-io/gitwise/internal/models"
 	"github.com/gitwise-io/gitwise/internal/services/comment"
+	"github.com/gitwise-io/gitwise/internal/services/mention"
+	"github.com/gitwise-io/gitwise/internal/services/notification"
 	"github.com/gitwise-io/gitwise/internal/services/pull"
 	"github.com/gitwise-io/gitwise/internal/services/repo"
 	"github.com/gitwise-io/gitwise/internal/services/review"
+	"github.com/gitwise-io/gitwise/internal/services/user"
 	"github.com/gitwise-io/gitwise/internal/services/webhook"
 )
 
 type PullHandler struct {
-	repos    *repo.Service
-	pulls    *pull.Service
-	reviews  *review.Service
-	comments *comment.Service
-	webhooks *webhook.Service
+	repos         *repo.Service
+	pulls         *pull.Service
+	reviews       *review.Service
+	comments      *comment.Service
+	webhooks      *webhook.Service
+	notifications *notification.Service
+	users         *user.Service
 }
 
-func NewPullHandler(repos *repo.Service, pulls *pull.Service, reviews *review.Service, comments *comment.Service, webhooks *webhook.Service) *PullHandler {
-	return &PullHandler{repos: repos, pulls: pulls, reviews: reviews, comments: comments, webhooks: webhooks}
+func NewPullHandler(repos *repo.Service, pulls *pull.Service, reviews *review.Service, comments *comment.Service, webhooks *webhook.Service, notifications *notification.Service, users *user.Service) *PullHandler {
+	return &PullHandler{repos: repos, pulls: pulls, reviews: reviews, comments: comments, webhooks: webhooks, notifications: notifications, users: users}
 }
 
 func (h *PullHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +82,8 @@ func (h *PullHandler) Create(w http.ResponseWriter, r *http.Request) {
 		"owner":        owner,
 		"sender":       pr.AuthorName,
 	})
+
+	go h.processMentions(context.Background(), pr.Title+" "+pr.Body, *userID, owner, repository.Name, pr.Number, pr.AuthorName)
 
 	writeJSON(w, http.StatusCreated, pr)
 }
@@ -368,6 +378,13 @@ func (h *PullHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 		"sender":       rev.AuthorName,
 	})
 
+	// Collect all review text (body + inline comments) for mention detection
+	reviewText := rev.Body
+	for _, ic := range req.Comments {
+		reviewText += " " + ic.Body
+	}
+	go h.processMentions(context.Background(), reviewText, *userID, owner, repository.Name, pr.Number, rev.AuthorName)
+
 	writeJSON(w, http.StatusCreated, rev)
 }
 
@@ -518,6 +535,8 @@ func (h *PullHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		"sender":       c.AuthorName,
 	})
 
+	go h.processMentions(context.Background(), c.Body, *userID, owner, repository.Name, pr.Number, c.AuthorName)
+
 	writeJSON(w, http.StatusCreated, c)
 }
 
@@ -557,4 +576,35 @@ func (h *PullHandler) ListComments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSONMeta(w, http.StatusOK, comments, &models.ResponseMeta{NextCursor: nextCursor})
+}
+
+// processMentions parses @mentions from text and creates a notification for
+// each mentioned user, skipping the author themselves.
+func (h *PullHandler) processMentions(ctx context.Context, text string, authorID uuid.UUID, owner, repoName string, number int, authorName string) {
+	usernames := mention.Parse(text)
+	if len(usernames) == 0 {
+		return
+	}
+
+	link := fmt.Sprintf("/%s/%s/pulls/%d", owner, repoName, number)
+	title := fmt.Sprintf("%s mentioned you in pull request #%d", authorName, number)
+
+	for _, username := range usernames {
+		mentioned, err := h.users.GetByUsername(ctx, username)
+		if err != nil {
+			continue // user not found — skip silently
+		}
+		if mentioned.ID == authorID {
+			continue // don't notify yourself
+		}
+
+		if _, err := h.notifications.Create(ctx, mentioned.ID, "mention", title, text, link); err != nil {
+			slog.Error("failed to create mention notification",
+				"mentioned_user", username,
+				"author", authorName,
+				"link", link,
+				"error", err,
+			)
+		}
+	}
 }
