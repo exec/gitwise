@@ -1707,10 +1707,33 @@ input:disabled {
   background: var(--bg-tertiary);
   border-radius: var(--radius);
   margin-bottom: 4px;
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
 }
 
 .inline-comment-display strong {
   margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.inline-comment-remove-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: var(--radius);
+}
+
+.inline-comment-remove-btn:hover {
+  color: var(--danger);
+  background: var(--bg-secondary);
 }
 
 .tab-count {

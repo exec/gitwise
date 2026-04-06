@@ -18,11 +18,13 @@ interface InlineComment {
   side: string;
   body: string;
   author_name?: string;
+  pendingIndex?: number;
 }
 
 interface DiffViewerProps {
   files: DiffFile[];
   onAddInlineComment?: (path: string, line: number, side: string, body: string) => void;
+  onRemoveInlineComment?: (pendingIndex: number) => void;
   inlineComments?: InlineComment[];
 }
 
@@ -215,7 +217,7 @@ function parsePatchSideBySide(lines: PatchLine[]): SideBySidePair[] {
   return pairs;
 }
 
-export default function DiffViewer({ files, onAddInlineComment, inlineComments }: DiffViewerProps) {
+export default function DiffViewer({ files, onAddInlineComment, onRemoveInlineComment, inlineComments }: DiffViewerProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("unified");
   const [commentForm, setCommentForm] = useState<{path: string, line: number, side: string} | null>(null);
   const [commentText, setCommentText] = useState("");
@@ -333,6 +335,15 @@ export default function DiffViewer({ files, onAddInlineComment, inlineComments }
                                 <div key={ci} className="inline-comment-display">
                                   {c.author_name && <strong>{c.author_name}</strong>}
                                   {c.body}
+                                  {c.pendingIndex != null && onRemoveInlineComment && (
+                                    <button
+                                      className="inline-comment-remove-btn"
+                                      onClick={() => onRemoveInlineComment(c.pendingIndex!)}
+                                      title="Remove pending comment"
+                                    >
+                                      &times;
+                                    </button>
+                                  )}
                                 </div>
                               ))}
                             </td>
@@ -443,6 +454,15 @@ export default function DiffViewer({ files, onAddInlineComment, inlineComments }
                                 <div key={ci} className="inline-comment-display">
                                   {c.author_name && <strong>{c.author_name}</strong>}
                                   {c.body}
+                                  {c.pendingIndex != null && onRemoveInlineComment && (
+                                    <button
+                                      className="inline-comment-remove-btn"
+                                      onClick={() => onRemoveInlineComment(c.pendingIndex!)}
+                                      title="Remove pending comment"
+                                    >
+                                      &times;
+                                    </button>
+                                  )}
                                 </div>
                               ))}
                             </td>

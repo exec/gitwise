@@ -84,6 +84,7 @@ func isPrivateIP(ip net.IP) bool {
 type Service struct {
 	db     *pgxpool.Pool
 	client *http.Client
+	stopCh chan struct{}
 }
 
 func NewService(db *pgxpool.Pool) *Service {
@@ -116,7 +117,35 @@ func NewService(db *pgxpool.Pool) *Service {
 				return nil
 			},
 		},
+		stopCh: make(chan struct{}),
 	}
+}
+
+// StartRetryLoop starts a background goroutine that periodically retries failed
+// webhook deliveries using exponential backoff.
+func (s *Service) StartRetryLoop() {
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+				if err := s.RetryPending(ctx); err != nil {
+					slog.Error("webhook retry loop failed", "error", err)
+				}
+				cancel()
+			case <-s.stopCh:
+				return
+			}
+		}
+	}()
+	slog.Info("webhook retry loop started", "interval", "30s")
+}
+
+// StopRetryLoop signals the background retry goroutine to stop.
+func (s *Service) StopRetryLoop() {
+	close(s.stopCh)
 }
 
 func (s *Service) Create(ctx context.Context, repoID uuid.UUID, req models.CreateWebhookRequest) (*models.Webhook, error) {
