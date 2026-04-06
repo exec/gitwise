@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	gossh "github.com/gliderlabs/ssh"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
@@ -553,10 +555,12 @@ func (s *Server) checkSSHAccess(ctx context.Context, username, owner, repoName, 
 		if service == "git-upload-pack" {
 			return true // any collaborator role grants read
 		}
-		// git-receive-pack requires write or admin
 		if role == "write" || role == "admin" {
 			return true
 		}
+		// collaborator exists but insufficient role — fall through to team check
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return false // DB error — fail closed
 	}
 
 	// Check team-based permission (includes org owner auto-admin)

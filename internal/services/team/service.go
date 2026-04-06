@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -13,10 +14,12 @@ import (
 	"github.com/gitwise-io/gitwise/internal/models"
 )
 
+var teamNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,98}[a-zA-Z0-9]$|^[a-zA-Z0-9]$`)
+
 var (
 	ErrNotFound       = errors.New("team not found")
 	ErrDuplicate      = errors.New("team already exists")
-	ErrInvalidName    = errors.New("team name is required (max 100 chars)")
+	ErrInvalidName    = errors.New("team name must be 1-100 alphanumeric chars, hyphens, or underscores")
 	ErrInvalidPerm    = errors.New("permission must be read, triage, write, or admin")
 	ErrNotOrgOwner    = errors.New("only org owners can manage teams")
 	ErrMemberNotFound = errors.New("user not found or not an org member")
@@ -56,7 +59,7 @@ func (s *Service) IsOrgOwner(ctx context.Context, orgID, userID uuid.UUID) (bool
 // Create creates a new team in the given organization.
 func (s *Service) Create(ctx context.Context, orgID uuid.UUID, req models.CreateTeamRequest) (*models.OrgTeam, error) {
 	name := strings.TrimSpace(req.Name)
-	if name == "" || len(name) > 100 {
+	if !teamNameRe.MatchString(name) {
 		return nil, ErrInvalidName
 	}
 
@@ -135,6 +138,9 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]models.OrgTeam, 
 			return nil, fmt.Errorf("scan team: %w", err)
 		}
 		teams = append(teams, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate teams: %w", err)
 	}
 	if teams == nil {
 		teams = []models.OrgTeam{}
@@ -294,6 +300,9 @@ func (s *Service) ListMembers(ctx context.Context, orgID uuid.UUID, teamName str
 		}
 		members = append(members, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate members: %w", err)
+	}
 	if members == nil {
 		members = []models.OrgTeamMember{}
 	}
@@ -383,6 +392,9 @@ func (s *Service) ListRepos(ctx context.Context, orgID uuid.UUID, teamName strin
 			return nil, fmt.Errorf("scan team repo: %w", err)
 		}
 		repos = append(repos, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate repos: %w", err)
 	}
 	if repos == nil {
 		repos = []models.OrgTeamRepo{}
