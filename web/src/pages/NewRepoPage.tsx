@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { post, get, ApiError } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
@@ -161,6 +161,10 @@ export default function NewRepoPage() {
           {mutation.isPending ? "Creating..." : "Create repository"}
         </button>
       </form>
+      <p className="import-link-hint">
+        Have an existing repository?{" "}
+        <Link to="/new/import">Import from GitHub or GitLab</Link>
+      </p>
     </div>
   );
 }

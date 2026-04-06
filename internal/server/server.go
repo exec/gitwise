@@ -26,18 +26,19 @@ import (
 	"github.com/gitwise-io/gitwise/internal/middleware"
 	"github.com/gitwise-io/gitwise/internal/services/activity"
 	"github.com/gitwise-io/gitwise/internal/services/comment"
+	"github.com/gitwise-io/gitwise/internal/services/commit"
+	"github.com/gitwise-io/gitwise/internal/services/embedding"
+	"github.com/gitwise-io/gitwise/internal/services/importer"
 	"github.com/gitwise-io/gitwise/internal/services/issue"
 	"github.com/gitwise-io/gitwise/internal/services/label"
 	"github.com/gitwise-io/gitwise/internal/services/milestone"
 	"github.com/gitwise-io/gitwise/internal/services/notification"
+	"github.com/gitwise-io/gitwise/internal/services/oauth"
 	"github.com/gitwise-io/gitwise/internal/services/org"
 	"github.com/gitwise-io/gitwise/internal/services/protection"
 	"github.com/gitwise-io/gitwise/internal/services/pull"
 	"github.com/gitwise-io/gitwise/internal/services/repo"
 	"github.com/gitwise-io/gitwise/internal/services/review"
-	"github.com/gitwise-io/gitwise/internal/services/embedding"
-	"github.com/gitwise-io/gitwise/internal/services/commit"
-	"github.com/gitwise-io/gitwise/internal/services/oauth"
 	"github.com/gitwise-io/gitwise/internal/services/search"
 	"github.com/gitwise-io/gitwise/internal/services/sshkey"
 	"github.com/gitwise-io/gitwise/internal/services/team"
@@ -75,6 +76,7 @@ type Server struct {
 	embeddingSvc  *embedding.Service
 	commitIndexer *commit.Indexer
 	totpSvc       *totpsvc.Service
+	importSvc     *importer.Service
 
 	// WebSocket
 	wsHub *gitwisews.Hub
@@ -102,6 +104,7 @@ type Server struct {
 	sshkeyHandler    *handlers.SSHKeyHandler
 	twoFactorHandler *handlers.TwoFactorHandler
 	adminHandler     *handlers.AdminHandler
+	importHandler    *handlers.ImportHandler
 
 	// Git protocol
 	gitHTTP *git.HTTPHandler
@@ -250,6 +253,10 @@ func (s *Server) initServices() {
 
 	// Commit indexer
 	s.commitIndexer = commit.NewIndexer(s.db, s.gitSvc)
+
+	// Import service + handler
+	s.importSvc = importer.NewService(s.db, s.rdb, s.gitSvc, s.repoSvc, s.issueSvc, s.pullSvc, s.commentSvc)
+	s.importHandler = handlers.NewImportHandler(s.importSvc)
 
 	// Admin handler (after commitIndexer is initialized)
 	s.adminHandler = handlers.NewAdminHandler(s.db, s.userSvc, s.commitIndexer)
@@ -494,6 +501,14 @@ func (s *Server) setupRoutes() {
 
 		// Namespace resolution
 		r.Get("/resolve/{name}", s.orgHandler.Resolve)
+
+		// Import (authenticated)
+		r.Route("/import", func(r chi.Router) {
+			r.Use(middleware.RequireAuth)
+			r.Post("/github", s.importHandler.ImportGitHub)
+			r.Post("/gitlab", s.importHandler.ImportGitLab)
+			r.Get("/status/{id}", s.importHandler.GetImportStatus)
+		})
 
 		// Search
 		r.Get("/search", s.searchHandler.Search)
