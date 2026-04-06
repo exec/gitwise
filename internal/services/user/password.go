@@ -33,6 +33,12 @@ func hashPassword(password string) (string, error) {
 	), nil
 }
 
+// VerifyPassword checks a plaintext password against an argon2id hash.
+// Exported for use by the TOTP service for password re-authentication.
+func VerifyPassword(password, encoded string) bool {
+	return verifyPassword(password, encoded)
+}
+
 func verifyPassword(password, encoded string) bool {
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" {

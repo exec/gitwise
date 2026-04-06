@@ -1,5 +1,5 @@
 import { useState, useEffect, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "../stores/auth";
 import { get, ApiError } from "../lib/api";
 
@@ -11,9 +11,82 @@ function GitHubIcon() {
   );
 }
 
+function TwoFactorForm() {
+  const verify2FA = useAuthStore((s) => s.verify2FA);
+  const clearChallenge = useAuthStore((s) => s.clearTwoFactorChallenge);
+  const navigate = useNavigate();
+
+  const [code, setCode] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setSubmitting(true);
+    try {
+      await verify2FA(code);
+      navigate("/");
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err.message);
+      } else {
+        setError("An unexpected error occurred");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="auth-page">
+      <div className="auth-card">
+        <h1>Two-factor authentication</h1>
+        <p className="muted" style={{ marginBottom: 16 }}>
+          Enter the 6-digit code from your authenticator app, or use a recovery code.
+        </p>
+        {error && <div className="error-banner">{error}</div>}
+        <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label htmlFor="totp-code">Authentication code</label>
+            <input
+              id="totp-code"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="123456"
+              required
+              autoFocus
+              maxLength={20}
+              style={{ fontFamily: "var(--font-mono)", fontSize: "1.125rem", letterSpacing: "0.1em" }}
+            />
+          </div>
+          <button type="submit" className="btn btn-primary btn-block" disabled={submitting}>
+            {submitting ? "Verifying..." : "Verify"}
+          </button>
+        </form>
+        <p className="auth-footer">
+          <button
+            type="button"
+            onClick={clearChallenge}
+            style={{ background: "none", border: "none", color: "var(--accent)", cursor: "pointer", padding: 0 }}
+          >
+            Back to login
+          </button>
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function LoginPage() {
   const login = useAuthStore((s) => s.login);
+  const twoFactorChallenge = useAuthStore((s) => s.twoFactorChallenge);
+  const setTwoFactorChallenge = useAuthStore((s) => s.setTwoFactorChallenge);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [loginField, setLoginField] = useState("");
   const [password, setPassword] = useState("");
@@ -27,13 +100,29 @@ export default function LoginPage() {
       .catch(() => {});
   }, []);
 
+  // C5: Check for pending_2fa query parameter (from GitHub OAuth redirect).
+  useEffect(() => {
+    const pendingToken = searchParams.get("pending_2fa");
+    if (pendingToken) {
+      setTwoFactorChallenge(pendingToken);
+    }
+  }, [searchParams, setTwoFactorChallenge]);
+
+  // Show 2FA form if a challenge is pending.
+  if (twoFactorChallenge) {
+    return <TwoFactorForm />;
+  }
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
     setSubmitting(true);
     try {
       await login(loginField, password);
-      navigate("/");
+      // If login returns without setting twoFactorChallenge, we're fully authed.
+      if (!useAuthStore.getState().twoFactorChallenge) {
+        navigate("/");
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);

@@ -10,12 +10,25 @@ export interface User {
   updated_at: string;
 }
 
+interface TwoFactorChallenge {
+  pending_token: string;
+}
+
+interface LoginResult {
+  requires_2fa?: boolean;
+  pending_token?: string;
+}
+
 interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  twoFactorChallenge: TwoFactorChallenge | null;
 
   login: (login: string, password: string) => Promise<void>;
+  verify2FA: (code: string) => Promise<void>;
+  setTwoFactorChallenge: (token: string) => void;
+  clearTwoFactorChallenge: () => void;
   register: (
     username: string,
     email: string,
@@ -26,14 +39,40 @@ interface AuthState {
   fetchMe: () => Promise<void>;
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
+export const useAuthStore = create<AuthState>((set, getState) => ({
   user: null,
   isAuthenticated: false,
   isLoading: true,
+  twoFactorChallenge: null,
 
   login: async (login, password) => {
-    const { data } = await post<User>("/auth/login", { login, password });
-    set({ user: data, isAuthenticated: true });
+    const { data } = await post<LoginResult & User>("/auth/login", { login, password });
+    if (data.requires_2fa && data.pending_token) {
+      set({ twoFactorChallenge: { pending_token: data.pending_token } });
+      return;
+    }
+    // Normal login (no 2FA) - data is the User object.
+    set({ user: data as unknown as User, isAuthenticated: true, twoFactorChallenge: null });
+  },
+
+  verify2FA: async (code: string) => {
+    const challenge = getState().twoFactorChallenge;
+    if (!challenge) {
+      throw new Error("No pending 2FA challenge");
+    }
+    const { data } = await post<User>("/auth/verify-2fa", {
+      pending_token: challenge.pending_token,
+      code,
+    });
+    set({ user: data, isAuthenticated: true, twoFactorChallenge: null });
+  },
+
+  setTwoFactorChallenge: (token: string) => {
+    set({ twoFactorChallenge: { pending_token: token } });
+  },
+
+  clearTwoFactorChallenge: () => {
+    set({ twoFactorChallenge: null });
   },
 
   register: async (username, email, password, fullName) => {
@@ -52,7 +91,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch {
       // Clear local state even if server call fails
     }
-    set({ user: null, isAuthenticated: false });
+    set({ user: null, isAuthenticated: false, twoFactorChallenge: null });
   },
 
   fetchMe: async () => {

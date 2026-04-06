@@ -11,6 +11,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/middleware"
 	"github.com/gitwise-io/gitwise/internal/models"
 	"github.com/gitwise-io/gitwise/internal/services/oauth"
+	"github.com/gitwise-io/gitwise/internal/services/totp"
 	"github.com/gitwise-io/gitwise/internal/services/user"
 )
 
@@ -18,10 +19,11 @@ type AuthHandler struct {
 	users    *user.Service
 	sessions *middleware.SessionManager
 	oauth    *oauth.Service // nil if GitHub OAuth is not configured
+	totp     *totp.Service
 }
 
-func NewAuthHandler(users *user.Service, sessions *middleware.SessionManager, oauthSvc *oauth.Service) *AuthHandler {
-	return &AuthHandler{users: users, sessions: sessions, oauth: oauthSvc}
+func NewAuthHandler(users *user.Service, sessions *middleware.SessionManager, oauthSvc *oauth.Service, totpSvc *totp.Service) *AuthHandler {
+	return &AuthHandler{users: users, sessions: sessions, oauth: oauthSvc, totp: totpSvc}
 }
 
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +68,30 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "authentication failed")
 		return
+	}
+
+	// Check if 2FA is enabled for this user.
+	if h.totp != nil {
+		enabled, err := h.totp.IsEnabled(r.Context(), u.ID)
+		if err != nil {
+			slog.Error("failed to check 2fa status during login", "error", err)
+			writeError(w, http.StatusInternalServerError, "server_error", "authentication failed")
+			return
+		}
+		if enabled {
+			// Don't create a session yet. Return a pending token for 2FA verification.
+			pendingToken, err := h.totp.StorePendingAuth(r.Context(), u.ID)
+			if err != nil {
+				slog.Error("failed to create pending 2fa auth", "error", err)
+				writeError(w, http.StatusInternalServerError, "server_error", "authentication failed")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"requires_2fa":  true,
+				"pending_token": pendingToken,
+			})
+			return
+		}
 	}
 
 	if err := h.sessions.Create(r.Context(), w, u.ID); err != nil {
@@ -198,6 +224,8 @@ func (h *AuthHandler) GitHubLogin(w http.ResponseWriter, r *http.Request) {
 // state parameter, exchanges the authorization code for a token, fetches the
 // GitHub user, finds or creates a local user, creates a session, and redirects
 // to the frontend.
+// C5: If the resolved user has 2FA enabled, redirect to the frontend 2FA challenge
+// instead of creating a session immediately.
 func (h *AuthHandler) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 	if h.oauth == nil {
 		writeError(w, http.StatusNotFound, "not_configured", "GitHub OAuth is not configured")
@@ -243,6 +271,27 @@ func (h *AuthHandler) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 		slog.Error("oauth find/create user failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to create or link user")
 		return
+	}
+
+	// C5: Check if the resolved user has 2FA enabled.
+	if h.totp != nil {
+		enabled, err := h.totp.IsEnabled(r.Context(), u.ID)
+		if err != nil {
+			slog.Error("failed to check 2fa status during github callback", "error", err)
+			writeError(w, http.StatusInternalServerError, "server_error", "authentication failed")
+			return
+		}
+		if enabled {
+			// Store a pending auth token and redirect to the frontend 2FA challenge.
+			pendingToken, err := h.totp.StorePendingAuth(r.Context(), u.ID)
+			if err != nil {
+				slog.Error("failed to create pending 2fa auth for github user", "error", err)
+				writeError(w, http.StatusInternalServerError, "server_error", "authentication failed")
+				return
+			}
+			http.Redirect(w, r, "/login?pending_2fa="+pendingToken, http.StatusTemporaryRedirect)
+			return
+		}
 	}
 
 	// Create session.

@@ -38,6 +38,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/oauth"
 	"github.com/gitwise-io/gitwise/internal/services/search"
 	"github.com/gitwise-io/gitwise/internal/services/sshkey"
+	totpsvc "github.com/gitwise-io/gitwise/internal/services/totp"
 	"github.com/gitwise-io/gitwise/internal/services/user"
 	"github.com/gitwise-io/gitwise/internal/services/webhook"
 	gitwisews "github.com/gitwise-io/gitwise/internal/websocket"
@@ -69,6 +70,7 @@ type Server struct {
 	sshkeySvc     *sshkey.Service
 	embeddingSvc  *embedding.Service
 	commitIndexer *commit.Indexer
+	totpSvc       *totpsvc.Service
 
 	// WebSocket
 	wsHub *gitwisews.Hub
@@ -91,8 +93,9 @@ type Server struct {
 	activityHandler   *handlers.ActivityHandler
 	searchHandler     *handlers.SearchHandler
 	orgHandler        *handlers.OrgHandler
-	webhookHandler  *handlers.WebhookHandler
-	sshkeyHandler   *handlers.SSHKeyHandler
+	webhookHandler   *handlers.WebhookHandler
+	sshkeyHandler    *handlers.SSHKeyHandler
+	twoFactorHandler *handlers.TwoFactorHandler
 
 	// Git protocol
 	gitHTTP *git.HTTPHandler
@@ -124,6 +127,16 @@ func (s *Server) initServices() {
 	s.sessions = middleware.NewSessionManager(s.rdb)
 	s.auth = middleware.NewAuth(s.sessions, s.userSvc)
 
+	// TOTP 2FA service (nil-safe if key is not configured)
+	if totpService, err := totpsvc.NewService(s.db, s.rdb, s.cfg.TOTPKey); err != nil {
+		slog.Error("failed to initialize TOTP service", "error", err)
+	} else {
+		s.totpSvc = totpService
+		if s.cfg.TOTPKey != "" {
+			slog.Info("2FA (TOTP) enabled")
+		}
+	}
+
 	// Phase 2 services
 	s.issueSvc = issue.NewService(s.db)
 	s.protectionSvc = protection.NewService(s.db)
@@ -153,7 +166,8 @@ func (s *Server) initServices() {
 	}
 
 	// Handlers
-	s.authHandler = handlers.NewAuthHandler(s.userSvc, s.sessions, oauthSvc)
+	s.authHandler = handlers.NewAuthHandler(s.userSvc, s.sessions, oauthSvc, s.totpSvc)
+	s.twoFactorHandler = handlers.NewTwoFactorHandler(s.totpSvc, s.userSvc, s.sessions)
 	s.repoHandler = handlers.NewRepoHandler(s.repoSvc)
 	s.browseHandler = handlers.NewBrowseHandler(s.repoSvc, s.gitSvc)
 	s.issueHandler = handlers.NewIssueHandler(s.repoSvc, s.issueSvc, s.commentSvc, s.webhookSvc, s.notifSvc, s.userSvc)
@@ -279,6 +293,7 @@ func (s *Server) setupRoutes() {
 		r.Post("/auth/logout", s.authHandler.Logout)
 		r.Get("/auth/me", s.authHandler.Me)
 		r.Get("/auth/providers", s.authHandler.ListProviders)
+		r.Post("/auth/verify-2fa", s.twoFactorHandler.Verify2FA)
 		r.Get("/auth/github", s.authHandler.GitHubLogin)
 		r.Get("/auth/github/callback", s.authHandler.GitHubCallback)
 
@@ -288,6 +303,15 @@ func (s *Server) setupRoutes() {
 			r.Post("/", s.authHandler.CreateToken)
 			r.Get("/", s.authHandler.ListTokens)
 			r.Delete("/{tokenID}", s.authHandler.DeleteToken)
+		})
+
+		// Two-factor authentication (authenticated)
+		r.Route("/user/2fa", func(r chi.Router) {
+			r.Use(middleware.RequireAuth)
+			r.Get("/status", s.twoFactorHandler.Status)
+			r.Post("/setup", s.twoFactorHandler.Setup)
+			r.Post("/enable", s.twoFactorHandler.Enable)
+			r.Post("/disable", s.twoFactorHandler.Disable)
 		})
 
 		// SSH keys (authenticated)

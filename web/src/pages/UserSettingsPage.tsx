@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { get, post, put, del } from "../lib/api";
@@ -55,7 +55,7 @@ function formatDate(dateStr: string | null): string {
 }
 
 export default function UserSettingsPage() {
-  const [activeTab, setActiveTab] = useState<"tokens" | "ssh-keys" | "notifications" | "account">("tokens");
+  const [activeTab, setActiveTab] = useState<"tokens" | "ssh-keys" | "2fa" | "notifications" | "account">("tokens");
   const navigate = useNavigate();
 
   return (
@@ -80,6 +80,12 @@ export default function UserSettingsPage() {
           SSH Keys
         </button>
         <button
+          className={`settings-tab ${activeTab === "2fa" ? "active" : ""}`}
+          onClick={() => setActiveTab("2fa")}
+        >
+          Two-Factor Auth
+        </button>
+        <button
           className={`settings-tab ${activeTab === "notifications" ? "active" : ""}`}
           onClick={() => setActiveTab("notifications")}
         >
@@ -96,6 +102,7 @@ export default function UserSettingsPage() {
       <div className="settings-content">
         {activeTab === "tokens" && <TokensTab />}
         {activeTab === "ssh-keys" && <SSHKeysTab />}
+        {activeTab === "2fa" && <TwoFactorTab />}
         {activeTab === "notifications" && <NotificationsTab />}
         {activeTab === "account" && <AccountTab />}
       </div>
@@ -591,6 +598,322 @@ function NotificationsTab() {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+interface TwoFactorStatus {
+  enabled: boolean;
+}
+
+interface TwoFactorSetupData {
+  secret: string;
+  uri: string;
+  qr_code: string;
+  recovery_codes: string[];
+}
+
+function TwoFactorTab() {
+  const queryClient = useQueryClient();
+  const [setupData, setSetupData] = useState<TwoFactorSetupData | null>(null);
+  const [setupPassword, setSetupPassword] = useState("");
+  const [verifyCode, setVerifyCode] = useState("");
+  const [disableCode, setDisableCode] = useState("");
+  const [error, setError] = useState("");
+  const [showRecoveryCodes, setShowRecoveryCodes] = useState(false);
+  const [showDisable, setShowDisable] = useState(false);
+  const [copiedCodes, setCopiedCodes] = useState(false);
+  const recoveryRef = useRef<HTMLPreElement>(null);
+
+  const { data: status, isLoading } = useQuery({
+    queryKey: ["2fa-status"],
+    queryFn: async () => {
+      const { data } = await get<TwoFactorStatus>("/user/2fa/status");
+      return data;
+    },
+  });
+
+  const setupMutation = useMutation({
+    mutationFn: async () => {
+      const { data } = await post<TwoFactorSetupData>("/user/2fa/setup", {
+        current_password: setupPassword,
+      });
+      return data;
+    },
+    onSuccess: (data) => {
+      setSetupData(data);
+      setSetupPassword("");
+      setError("");
+    },
+    onError: (err: Error) => {
+      setError(err.message);
+    },
+  });
+
+  const enableMutation = useMutation({
+    mutationFn: async () => {
+      await post("/user/2fa/enable", { code: verifyCode });
+    },
+    onSuccess: () => {
+      setVerifyCode("");
+      setError("");
+      setShowRecoveryCodes(true);
+      queryClient.invalidateQueries({ queryKey: ["2fa-status"] });
+    },
+    onError: (err: Error) => {
+      setError(err.message);
+    },
+  });
+
+  const disableMutation = useMutation({
+    mutationFn: async () => {
+      await post("/user/2fa/disable", { code: disableCode });
+    },
+    onSuccess: () => {
+      setDisableCode("");
+      setShowDisable(false);
+      setSetupData(null);
+      setError("");
+      queryClient.invalidateQueries({ queryKey: ["2fa-status"] });
+    },
+    onError: (err: Error) => {
+      setError(err.message);
+    },
+  });
+
+  const handleCopyRecoveryCodes = async () => {
+    if (!setupData?.recovery_codes) return;
+    await navigator.clipboard.writeText(setupData.recovery_codes.join("\n"));
+    setCopiedCodes(true);
+    setTimeout(() => setCopiedCodes(false), 2000);
+  };
+
+  if (isLoading) {
+    return (
+      <div>
+        <h2>Two-Factor Authentication</h2>
+        <p className="muted">Loading...</p>
+      </div>
+    );
+  }
+
+  const isEnabled = status?.enabled ?? false;
+
+  // Show recovery codes after enabling
+  if (showRecoveryCodes && setupData) {
+    return (
+      <div>
+        <h2>Two-Factor Authentication</h2>
+        <div className="settings-form-card">
+          <h3>Save your recovery codes</h3>
+          <p style={{ marginBottom: 12 }}>
+            Store these recovery codes in a safe place. Each code can only be used once.
+            If you lose access to your authenticator app, you can use these codes to sign in.
+          </p>
+          <pre
+            ref={recoveryRef}
+            style={{
+              background: "var(--bg-secondary)",
+              padding: 16,
+              borderRadius: 6,
+              fontFamily: "var(--font-mono)",
+              fontSize: "0.875rem",
+              lineHeight: 1.6,
+              marginBottom: 12,
+            }}
+          >
+            {setupData.recovery_codes.join("\n")}
+          </pre>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-primary btn-sm" onClick={handleCopyRecoveryCodes}>
+              {copiedCodes ? "Copied!" : "Copy codes"}
+            </button>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                setShowRecoveryCodes(false);
+                setSetupData(null);
+              }}
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 2FA is enabled - show status and disable option
+  if (isEnabled) {
+    return (
+      <div>
+        <h2>Two-Factor Authentication</h2>
+        <div className="settings-form-card">
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <span style={{
+              display: "inline-block",
+              width: 10,
+              height: 10,
+              borderRadius: "50%",
+              background: "var(--success, #2ea043)",
+            }} />
+            <strong>Two-factor authentication is enabled</strong>
+          </div>
+          <p className="muted" style={{ marginBottom: 16 }}>
+            Your account is protected with TOTP-based two-factor authentication.
+          </p>
+
+          {showDisable ? (
+            <>
+              {error && <div className="error-banner">{error}</div>}
+              <form onSubmit={(e) => { e.preventDefault(); disableMutation.mutate(); }}>
+                <div className="form-group">
+                  <label htmlFor="disable-code">Enter your TOTP code or a recovery code to disable 2FA</label>
+                  <input
+                    id="disable-code"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    value={disableCode}
+                    onChange={(e) => setDisableCode(e.target.value)}
+                    placeholder="123456"
+                    autoFocus
+                    style={{ fontFamily: "var(--font-mono)" }}
+                  />
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    type="submit"
+                    className="btn btn-sm"
+                    style={{ background: "var(--danger)", color: "#fff", borderColor: "var(--danger)" }}
+                    disabled={disableMutation.isPending || !disableCode.trim()}
+                  >
+                    {disableMutation.isPending ? "Disabling..." : "Disable 2FA"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => { setShowDisable(false); setError(""); }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </>
+          ) : (
+            <button
+              className="btn btn-sm"
+              style={{ background: "var(--danger)", color: "#fff", borderColor: "var(--danger)" }}
+              onClick={() => setShowDisable(true)}
+            >
+              Disable two-factor authentication
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // 2FA not enabled - show setup flow
+  return (
+    <div>
+      <h2>Two-Factor Authentication</h2>
+      {!setupData ? (
+        <div className="settings-form-card">
+          <p style={{ marginBottom: 16 }}>
+            Add an extra layer of security to your account by enabling two-factor authentication
+            using a TOTP authenticator app (like Google Authenticator, Authy, or 1Password).
+          </p>
+          {error && <div className="error-banner" style={{ marginBottom: 12 }}>{error}</div>}
+          <form onSubmit={(e) => { e.preventDefault(); setupMutation.mutate(); }}>
+            <div className="form-group">
+              <label htmlFor="setup-password">Confirm your password to begin setup</label>
+              <input
+                id="setup-password"
+                type="password"
+                autoComplete="current-password"
+                value={setupPassword}
+                onChange={(e) => setSetupPassword(e.target.value)}
+                placeholder="Enter your current password"
+                required
+              />
+            </div>
+            <button
+              type="submit"
+              className="btn btn-primary btn-sm"
+              disabled={setupMutation.isPending || !setupPassword.trim()}
+            >
+              {setupMutation.isPending ? "Setting up..." : "Set up two-factor authentication"}
+            </button>
+          </form>
+        </div>
+      ) : (
+        <div className="settings-form-card">
+          <h3>Scan QR code</h3>
+          <p style={{ marginBottom: 16 }}>
+            Scan this QR code with your authenticator app, then enter the 6-digit code below to verify.
+          </p>
+          <div style={{ textAlign: "center", marginBottom: 16 }}>
+            <img
+              src={setupData.qr_code}
+              alt="TOTP QR Code"
+              style={{ width: 256, height: 256, imageRendering: "pixelated" }}
+            />
+          </div>
+          <details style={{ marginBottom: 16 }}>
+            <summary style={{ cursor: "pointer", color: "var(--fg-muted)", fontSize: "0.875rem" }}>
+              Can't scan? Enter this key manually
+            </summary>
+            <code style={{
+              display: "block",
+              marginTop: 8,
+              padding: 12,
+              background: "var(--bg-secondary)",
+              borderRadius: 6,
+              fontFamily: "var(--font-mono)",
+              fontSize: "0.875rem",
+              wordBreak: "break-all",
+            }}>
+              {setupData.secret}
+            </code>
+          </details>
+
+          {error && <div className="error-banner">{error}</div>}
+          <form onSubmit={(e) => { e.preventDefault(); enableMutation.mutate(); }}>
+            <div className="form-group">
+              <label htmlFor="verify-code">Verification code</label>
+              <input
+                id="verify-code"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={verifyCode}
+                onChange={(e) => setVerifyCode(e.target.value)}
+                placeholder="123456"
+                maxLength={6}
+                autoFocus
+                style={{ fontFamily: "var(--font-mono)", fontSize: "1.125rem", letterSpacing: "0.1em" }}
+              />
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="submit"
+                className="btn btn-primary btn-sm"
+                disabled={enableMutation.isPending || verifyCode.length < 6}
+              >
+                {enableMutation.isPending ? "Verifying..." : "Enable 2FA"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => { setSetupData(null); setError(""); }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

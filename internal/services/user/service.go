@@ -224,6 +224,27 @@ func (s *Service) Authenticate(ctx context.Context, login, password string) (*mo
 	return user, nil
 }
 
+// GetByIDWithPassword returns a user by ID including the password hash.
+// Used by the TOTP service for password re-authentication during 2FA setup.
+func (s *Service) GetByIDWithPassword(ctx context.Context, id uuid.UUID) (*models.User, error) {
+	user := &models.User{}
+	err := s.db.QueryRow(ctx, `
+		SELECT id, username, email, COALESCE(password, ''), full_name, avatar_url, bio, is_admin, created_at, updated_at
+		FROM users WHERE id = $1`, id,
+	).Scan(
+		&user.ID, &user.Username, &user.Email, &user.Password,
+		&user.FullName, &user.AvatarURL, &user.Bio, &user.IsAdmin,
+		&user.CreatedAt, &user.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query user: %w", err)
+	}
+	return user, nil
+}
+
 func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (*models.User, error) {
 	user := &models.User{}
 	err := s.db.QueryRow(ctx, `

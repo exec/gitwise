@@ -19,6 +19,7 @@ type Config struct {
 	Secret      string
 	BaseURL     string
 	GitHubOAuth GitHubOAuthConfig
+	TOTPKey     string // hex-encoded 32-byte AES-256 key for encrypting TOTP secrets at rest
 }
 
 type GitHubOAuthConfig struct {
@@ -80,8 +81,9 @@ func Load() *Config {
 		Port:    envInt("GITWISE_PORT", 3000),
 		Host:    envStr("GITWISE_HOST", "0.0.0.0"),
 		SSHPort: envInt("GITWISE_SSH_PORT", 2222),
-		Secret: envStr("GITWISE_SECRET", "change-me-in-production"),
+		Secret:  envStr("GITWISE_SECRET", "change-me-in-production"),
 		BaseURL: envStr("GITWISE_BASE_URL", "http://localhost:3000"),
+		TOTPKey: envStr("GITWISE_TOTP_KEY", ""),
 		GitHubOAuth: GitHubOAuthConfig{
 			ClientID:     githubID,
 			ClientSecret: githubSecret,
