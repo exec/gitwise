@@ -125,7 +125,6 @@ export default function ImportPage() {
 
   const isPending =
     githubMutation.isPending || gitlabMutation.isPending;
-  const isRunning = status?.status === "running";
 
   const resetForm = () => {
     setJobID(null);
