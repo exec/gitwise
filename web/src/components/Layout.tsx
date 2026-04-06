@@ -1,9 +1,11 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "../stores/auth";
 import { useThemeStore } from "../stores/theme";
+import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import NotificationBell from "./NotificationBell";
+import KeyboardShortcutsHelp from "./KeyboardShortcutsHelp";
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user);
@@ -15,7 +17,22 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const toggleTheme = useThemeStore((s) => s.toggle);
   const [searchValue, setSearchValue] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const handleToggleHelp = useCallback(() => {
+    setShortcutsOpen((v) => !v);
+  }, []);
+
+  const handleFocusSearch = useCallback(() => {
+    searchInputRef.current?.focus();
+  }, []);
+
+  useKeyboardShortcuts({
+    onToggleHelp: handleToggleHelp,
+    onFocusSearch: handleFocusSearch,
+  });
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -60,6 +77,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <path fillRule="evenodd" d="M11.5 7a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Zm-.82 4.74a6 6 0 1 1 1.06-1.06l3.04 3.04a.75.75 0 1 1-1.06 1.06l-3.04-3.04Z" />
           </svg>
           <input
+            ref={searchInputRef}
             type="text"
             className="search-bar-input"
             placeholder="Search repos, issues, code..."
@@ -134,6 +152,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </nav>
       <main className="main-content">{children}</main>
+      <KeyboardShortcutsHelp
+        isOpen={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+      />
     </div>
   );
 }
