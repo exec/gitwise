@@ -19,6 +19,14 @@ interface CreateTokenResponse {
   token: string;
 }
 
+interface SSHKey {
+  id: string;
+  name: string;
+  fingerprint: string;
+  key_type: string;
+  created_at: string;
+}
+
 const AVAILABLE_SCOPES = [
   { value: "repo:read", label: "repo:read" },
   { value: "repo:write", label: "repo:write" },
@@ -37,7 +45,7 @@ function formatDate(dateStr: string | null): string {
 }
 
 export default function UserSettingsPage() {
-  const [activeTab, setActiveTab] = useState<"tokens" | "account">("tokens");
+  const [activeTab, setActiveTab] = useState<"tokens" | "ssh-keys" | "account">("tokens");
   const navigate = useNavigate();
 
   return (
@@ -56,6 +64,12 @@ export default function UserSettingsPage() {
           API Tokens
         </button>
         <button
+          className={`settings-tab ${activeTab === "ssh-keys" ? "active" : ""}`}
+          onClick={() => setActiveTab("ssh-keys")}
+        >
+          SSH Keys
+        </button>
+        <button
           className={`settings-tab ${activeTab === "account" ? "active" : ""}`}
           onClick={() => setActiveTab("account")}
         >
@@ -65,6 +79,7 @@ export default function UserSettingsPage() {
 
       <div className="settings-content">
         {activeTab === "tokens" && <TokensTab />}
+        {activeTab === "ssh-keys" && <SSHKeysTab />}
         {activeTab === "account" && <AccountTab />}
       </div>
     </div>
@@ -287,6 +302,177 @@ function TokensTab() {
       ) : (
         <div className="settings-form-card">
           <p className="muted" style={{ margin: 0 }}>No API tokens yet. Create one to authenticate with the API.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SSHKeysTab() {
+  const queryClient = useQueryClient();
+  const [showAdd, setShowAdd] = useState(false);
+  const [keyTitle, setKeyTitle] = useState("");
+  const [keyContent, setKeyContent] = useState("");
+  const [addError, setAddError] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  const { data: keys, isLoading } = useQuery({
+    queryKey: ["ssh-keys"],
+    queryFn: async () => {
+      const { data } = await get<SSHKey[]>("/user/ssh-keys");
+      return data;
+    },
+  });
+
+  const addMutation = useMutation({
+    mutationFn: async () => {
+      const { data } = await post<SSHKey>("/user/ssh-keys", {
+        title: keyTitle,
+        public_key: keyContent,
+      });
+      return data;
+    },
+    onSuccess: () => {
+      setShowAdd(false);
+      setKeyTitle("");
+      setKeyContent("");
+      setAddError("");
+      queryClient.invalidateQueries({ queryKey: ["ssh-keys"] });
+    },
+    onError: (err: Error) => {
+      setAddError(err.message);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await del(`/user/ssh-keys/${id}`);
+    },
+    onSuccess: () => {
+      setDeleteConfirm(null);
+      queryClient.invalidateQueries({ queryKey: ["ssh-keys"] });
+    },
+  });
+
+  const handleAddSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!keyTitle.trim()) {
+      setAddError("Title is required");
+      return;
+    }
+    if (!keyContent.trim()) {
+      setAddError("Public key is required");
+      return;
+    }
+    setAddError("");
+    addMutation.mutate();
+  };
+
+  return (
+    <div>
+      <div className="settings-header">
+        <h2>SSH Keys</h2>
+        <button className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)}>
+          Add SSH key
+        </button>
+      </div>
+
+      {showAdd && (
+        <div className="settings-form-card">
+          <h3>Add new SSH key</h3>
+          {addError && <div className="error-banner">{addError}</div>}
+          <form onSubmit={handleAddSubmit}>
+            <div className="form-group">
+              <label htmlFor="ssh-key-title">Title</label>
+              <input
+                id="ssh-key-title"
+                type="text"
+                value={keyTitle}
+                onChange={(e) => setKeyTitle(e.target.value)}
+                placeholder="My Laptop"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="ssh-key-content">Public key</label>
+              <textarea
+                id="ssh-key-content"
+                value={keyContent}
+                onChange={(e) => setKeyContent(e.target.value)}
+                placeholder="ssh-ed25519 AAAA... user@host"
+                rows={4}
+                style={{ fontFamily: "var(--font-mono)", fontSize: "0.8125rem" }}
+              />
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="submit" className="btn btn-primary btn-sm" disabled={addMutation.isPending}>
+                {addMutation.isPending ? "Adding..." : "Add key"}
+              </button>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setShowAdd(false); setAddError(""); }}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {isLoading ? (
+        <p className="muted">Loading SSH keys...</p>
+      ) : keys && keys.length > 0 ? (
+        <div className="settings-form-card" style={{ padding: 0 }}>
+          <table className="token-list">
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Fingerprint</th>
+                <th>Type</th>
+                <th>Added</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {keys.map((key) => (
+                <tr key={key.id}>
+                  <td><strong>{key.name}</strong></td>
+                  <td>
+                    <code style={{ fontSize: "0.8125rem" }}>{key.fingerprint}</code>
+                  </td>
+                  <td>{key.key_type}</td>
+                  <td>{formatDate(key.created_at)}</td>
+                  <td>
+                    {deleteConfirm === key.id ? (
+                      <span style={{ display: "flex", gap: 4 }}>
+                        <button
+                          className="btn btn-sm"
+                          style={{ background: "var(--danger)", color: "#fff", borderColor: "var(--danger)" }}
+                          onClick={() => deleteMutation.mutate(key.id)}
+                          disabled={deleteMutation.isPending}
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => setDeleteConfirm(null)}
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setDeleteConfirm(key.id)}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="settings-form-card">
+          <p className="muted" style={{ margin: 0 }}>No SSH keys yet. Add one to push and pull via SSH.</p>
         </div>
       )}
     </div>

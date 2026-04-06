@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	gossh "github.com/gliderlabs/ssh"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -36,6 +37,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/commit"
 	"github.com/gitwise-io/gitwise/internal/services/oauth"
 	"github.com/gitwise-io/gitwise/internal/services/search"
+	"github.com/gitwise-io/gitwise/internal/services/sshkey"
 	"github.com/gitwise-io/gitwise/internal/services/user"
 	"github.com/gitwise-io/gitwise/internal/services/webhook"
 	gitwisews "github.com/gitwise-io/gitwise/internal/websocket"
@@ -64,6 +66,7 @@ type Server struct {
 	searchSvc     *search.Service
 	orgSvc        *org.Service
 	webhookSvc    *webhook.Service
+	sshkeySvc     *sshkey.Service
 	embeddingSvc  *embedding.Service
 	commitIndexer *commit.Indexer
 
@@ -88,10 +91,12 @@ type Server struct {
 	activityHandler   *handlers.ActivityHandler
 	searchHandler     *handlers.SearchHandler
 	orgHandler        *handlers.OrgHandler
-	webhookHandler *handlers.WebhookHandler
+	webhookHandler  *handlers.WebhookHandler
+	sshkeyHandler   *handlers.SSHKeyHandler
 
 	// Git protocol
 	gitHTTP *git.HTTPHandler
+	gitSSH  *git.SSHServer
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, rdb *redis.Client) *Server {
@@ -179,6 +184,20 @@ func (s *Server) initServices() {
 
 	s.webhookHandler = handlers.NewWebhookHandler(s.repoSvc, s.webhookSvc)
 
+	// SSH key service + handler
+	s.sshkeySvc = sshkey.NewService(s.db)
+	s.sshkeyHandler = handlers.NewSSHKeyHandler(s.sshkeySvc)
+
+	// SSH server (git over SSH) — auth via stored SSH keys
+	s.gitSSH = git.NewSSHServer(s.gitSvc, ":2222", func(key gossh.PublicKey) (string, bool) {
+		fp := sshkey.Fingerprint(key)
+		username, err := s.sshkeySvc.LookupByFingerprint(context.Background(), fp)
+		if err != nil {
+			return "", false
+		}
+		return username, true
+	})
+
 	// Commit indexer
 	s.commitIndexer = commit.NewIndexer(s.db, s.gitSvc)
 
@@ -246,6 +265,14 @@ func (s *Server) setupRoutes() {
 			r.Post("/", s.authHandler.CreateToken)
 			r.Get("/", s.authHandler.ListTokens)
 			r.Delete("/{tokenID}", s.authHandler.DeleteToken)
+		})
+
+		// SSH keys (authenticated)
+		r.Route("/user/ssh-keys", func(r chi.Router) {
+			r.Use(middleware.RequireAuth)
+			r.Post("/", s.sshkeyHandler.Create)
+			r.Get("/", s.sshkeyHandler.List)
+			r.Delete("/{keyID}", s.sshkeyHandler.Delete)
 		})
 
 		// User repos (authenticated)
@@ -379,6 +406,13 @@ func (s *Server) setupRoutes() {
 }
 
 func (s *Server) Start() error {
+	// Start SSH server in background
+	go func() {
+		if err := s.gitSSH.Start(); err != nil {
+			slog.Error("SSH server error", "error", err)
+		}
+	}()
+
 	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 	s.http = &http.Server{
 		Addr:              addr,
