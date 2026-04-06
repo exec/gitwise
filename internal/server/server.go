@@ -38,6 +38,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/oauth"
 	"github.com/gitwise-io/gitwise/internal/services/search"
 	"github.com/gitwise-io/gitwise/internal/services/sshkey"
+	"github.com/gitwise-io/gitwise/internal/services/team"
 	totpsvc "github.com/gitwise-io/gitwise/internal/services/totp"
 	"github.com/gitwise-io/gitwise/internal/services/user"
 	"github.com/gitwise-io/gitwise/internal/services/webhook"
@@ -66,6 +67,7 @@ type Server struct {
 	activitySvc   *activity.Service
 	searchSvc     *search.Service
 	orgSvc        *org.Service
+	teamSvc       *team.Service
 	webhookSvc    *webhook.Service
 	sshkeySvc     *sshkey.Service
 	embeddingSvc  *embedding.Service
@@ -93,6 +95,7 @@ type Server struct {
 	activityHandler   *handlers.ActivityHandler
 	searchHandler     *handlers.SearchHandler
 	orgHandler        *handlers.OrgHandler
+	teamHandler      *handlers.TeamHandler
 	webhookHandler   *handlers.WebhookHandler
 	sshkeyHandler    *handlers.SSHKeyHandler
 	twoFactorHandler *handlers.TwoFactorHandler
@@ -208,6 +211,10 @@ func (s *Server) initServices() {
 	// Org service
 	s.orgSvc = org.NewService(s.db)
 	s.orgHandler = handlers.NewOrgHandler(s.orgSvc)
+
+	// Team service
+	s.teamSvc = team.NewService(s.db)
+	s.teamHandler = handlers.NewTeamHandler(s.orgSvc, s.teamSvc)
 
 	s.webhookHandler = handlers.NewWebhookHandler(s.repoSvc, s.webhookSvc)
 
@@ -449,6 +456,23 @@ func (s *Server) setupRoutes() {
 			r.Get("/", s.orgHandler.Get)
 			r.Get("/members", s.orgHandler.ListMembers)
 			r.Get("/repos", s.orgHandler.ListRepos)
+
+			// Teams
+			r.Get("/teams", s.teamHandler.List)
+			r.With(middleware.RequireAuth).Post("/teams", s.teamHandler.Create)
+			r.Route("/teams/{team}", func(r chi.Router) {
+				r.Get("/", s.teamHandler.Get)
+				r.With(middleware.RequireAuth).Put("/", s.teamHandler.Update)
+				r.With(middleware.RequireAuth).Delete("/", s.teamHandler.Delete)
+
+				r.Get("/members", s.teamHandler.ListMembers)
+				r.With(middleware.RequireAuth).Put("/members/{username}", s.teamHandler.AddMember)
+				r.With(middleware.RequireAuth).Delete("/members/{username}", s.teamHandler.RemoveMember)
+
+				r.Get("/repos", s.teamHandler.ListRepos)
+				r.With(middleware.RequireAuth).Put("/repos/{repo}", s.teamHandler.AddRepo)
+				r.With(middleware.RequireAuth).Delete("/repos/{repo}", s.teamHandler.RemoveRepo)
+			})
 		})
 
 		// Search
@@ -509,8 +533,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // checkSSHAccess verifies that the authenticated SSH user can access the repo.
-// For git-upload-pack (read): owner match, public repo, or collaborator.
-// For git-receive-pack (write): owner match or collaborator with write/admin role.
+// For git-upload-pack (read): owner match, public repo, collaborator, or team membership.
+// For git-receive-pack (write): owner match, collaborator with write/admin, or team with write/admin.
 func (s *Server) checkSSHAccess(ctx context.Context, username, owner, repoName, service string) bool {
 	// Owner always has full access
 	if strings.EqualFold(username, owner) {
@@ -539,15 +563,27 @@ func (s *Server) checkSSHAccess(ctx context.Context, username, owner, repoName, 
 		SELECT role FROM repo_collaborators
 		WHERE repo_id = $1 AND user_id = $2`, repo.ID, user.ID,
 	).Scan(&role)
-	if err != nil {
+	if err == nil {
+		if service == "git-upload-pack" {
+			return true // any collaborator role grants read
+		}
+		// git-receive-pack requires write or admin
+		if role == "write" || role == "admin" {
+			return true
+		}
+	}
+
+	// Check team-based permission (includes org owner auto-admin)
+	teamPerm, err := s.teamSvc.GetUserRepoPermission(ctx, user.ID, repo.ID)
+	if err != nil || teamPerm == "" {
 		return false
 	}
 
 	if service == "git-upload-pack" {
-		return true // any collaborator role grants read
+		return true // any team permission grants read
 	}
 	// git-receive-pack requires write or admin
-	return role == "write" || role == "admin"
+	return teamPerm == "write" || teamPerm == "admin"
 }
 
 // EmbeddingService returns the embedding service for use by the embedding worker.
