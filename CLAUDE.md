@@ -32,7 +32,7 @@ internal/
 migrations/           — SQL migration files (numbered, applied in order)
 web/                  — React frontend (Vite)
 scripts/              — Build/deploy helpers
-docs/                 — Architecture documentation
+docs/                 — Documentation (API spec, self-hosting guide, config reference)
 ```
 
 ## Conventions

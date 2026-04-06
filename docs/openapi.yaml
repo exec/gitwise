@@ -1,0 +1,4252 @@
+openapi: 3.0.3
+info:
+  title: Gitwise API
+  description: |
+    REST API for Gitwise, an AI-native self-hosted code collaboration platform.
+
+    All API responses use a standard JSON envelope:
+    ```json
+    {
+      "data": { ... },
+      "meta": { "total": 0, "next_cursor": "" },
+      "errors": [{ "code": "...", "message": "...", "field": "..." }]
+    }
+    ```
+
+    Authentication is via session cookie (set by login/register endpoints) or
+    Bearer token (API tokens created via `/api/v1/auth/tokens`).
+  version: 1.0.0
+  license:
+    name: MIT
+
+servers:
+  - url: /api/v1
+    description: API v1
+
+security:
+  - sessionCookie: []
+  - bearerToken: []
+
+tags:
+  - name: Auth
+    description: Registration, login, logout, session, OAuth, API tokens
+  - name: Two-Factor Authentication
+    description: TOTP 2FA setup, enable, disable, verify
+  - name: User Profile
+    description: Profile management, contributions, pinned repos
+  - name: SSH Keys
+    description: Manage SSH keys for git-over-SSH access
+  - name: Repositories
+    description: Repository CRUD and listing
+  - name: Code Browsing
+    description: File trees, blobs, commits, branches, blame
+  - name: Issues
+    description: Issue tracking with labels, milestones, and comments
+  - name: Pull Requests
+    description: Pull requests, merging, diffs
+  - name: Reviews
+    description: Code review with inline comments and thread resolution
+  - name: Labels
+    description: Repository labels for issues and PRs
+  - name: Milestones
+    description: Repository milestones
+  - name: Branch Protection
+    description: Branch protection rules
+  - name: Webhooks
+    description: Repository webhooks and delivery history
+  - name: Notifications
+    description: User notifications and preferences
+  - name: Watching
+    description: Repository watch/unwatch
+  - name: Activity
+    description: Activity feeds for repos and users
+  - name: Organizations
+    description: Organization CRUD, members
+  - name: Teams
+    description: Organization teams, team members, team repos
+  - name: Search
+    description: Full-text and semantic code search
+  - name: Admin
+    description: Admin panel (requires admin role)
+  - name: Namespace
+    description: Namespace resolution (user or org)
+
+paths:
+  # ─── Health ──────────────────────────────────────────────────────────
+  /healthz:
+    get:
+      summary: Health check
+      operationId: healthCheck
+      tags: [Auth]
+      security: []
+      servers:
+        - url: /
+      responses:
+        "200":
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: ok
+
+  # ─── Auth ────────────────────────────────────────────────────────────
+  /auth/register:
+    post:
+      summary: Register a new user
+      operationId: register
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: User created and session started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /auth/login:
+    post:
+      summary: Log in with username/email and password
+      description: |
+        Returns the user object on success. If the user has 2FA enabled,
+        returns `{ "requires_2fa": true, "pending_token": "..." }` instead
+        of creating a session. Use `/auth/verify-2fa` to complete login.
+      operationId: login
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login successful or 2FA required
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/DataResponse_User"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          requires_2fa:
+                            type: boolean
+                          pending_token:
+                            type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/logout:
+    post:
+      summary: Log out (destroy session)
+      operationId: logout
+      tags: [Auth]
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+
+  /auth/me:
+    get:
+      summary: Get the currently authenticated user
+      operationId: getMe
+      tags: [Auth]
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/providers:
+    get:
+      summary: List enabled OAuth providers
+      operationId: listProviders
+      tags: [Auth]
+      security: []
+      responses:
+        "200":
+          description: Array of provider names (e.g. ["github"])
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: string
+
+  /auth/verify-2fa:
+    post:
+      summary: Complete login with 2FA code
+      operationId: verify2FA
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pending_token, code]
+              properties:
+                pending_token:
+                  type: string
+                code:
+                  type: string
+                  description: 6-digit TOTP code or recovery code
+      responses:
+        "200":
+          description: 2FA verified, session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          description: Too many failed attempts
+
+  /auth/github:
+    get:
+      summary: Initiate GitHub OAuth login
+      operationId: githubLogin
+      tags: [Auth]
+      security: []
+      responses:
+        "307":
+          description: Redirect to GitHub authorization page
+
+  /auth/github/callback:
+    get:
+      summary: GitHub OAuth callback
+      operationId: githubCallback
+      tags: [Auth]
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+      responses:
+        "307":
+          description: Redirect to frontend (session set via cookie)
+
+  # ─── API Tokens ──────────────────────────────────────────────────────
+  /auth/tokens:
+    post:
+      summary: Create an API token
+      operationId: createToken
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTokenRequest"
+      responses:
+        "201":
+          description: Token created (token value only returned once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_APIToken"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    get:
+      summary: List API tokens for the current user
+      operationId: listTokens
+      tags: [Auth]
+      responses:
+        "200":
+          description: List of tokens (token values are not included)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/APIToken"
+
+  /auth/tokens/{tokenID}:
+    delete:
+      summary: Delete an API token
+      operationId: deleteToken
+      tags: [Auth]
+      parameters:
+        - name: tokenID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Token deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─── Two-Factor Authentication ───────────────────────────────────────
+  /user/2fa/status:
+    get:
+      summary: Check if 2FA is enabled
+      operationId: get2FAStatus
+      tags: [Two-Factor Authentication]
+      responses:
+        "200":
+          description: 2FA status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+
+  /user/2fa/setup:
+    post:
+      summary: Generate TOTP secret and QR code
+      operationId: setup2FA
+      tags: [Two-Factor Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password]
+              properties:
+                current_password:
+                  type: string
+      responses:
+        "200":
+          description: TOTP setup data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      secret:
+                        type: string
+                      uri:
+                        type: string
+                      qr_code:
+                        type: string
+                        description: Base64-encoded PNG data URI
+                      recovery_codes:
+                        type: array
+                        items:
+                          type: string
+        "409":
+          description: 2FA already enabled
+
+  /user/2fa/enable:
+    post:
+      summary: Activate 2FA with a TOTP code
+      operationId: enable2FA
+      tags: [Two-Factor Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+      responses:
+        "200":
+          description: 2FA enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+
+  /user/2fa/disable:
+    post:
+      summary: Disable 2FA with a TOTP or recovery code
+      operationId: disable2FA
+      tags: [Two-Factor Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+      responses:
+        "200":
+          description: 2FA disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+
+  # ─── SSH Keys ────────────────────────────────────────────────────────
+  /user/ssh-keys:
+    post:
+      summary: Add an SSH key
+      operationId: createSSHKey
+      tags: [SSH Keys]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSSHKeyRequest"
+      responses:
+        "201":
+          description: SSH key added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_SSHKey"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: Duplicate key
+    get:
+      summary: List SSH keys for the current user
+      operationId: listSSHKeys
+      tags: [SSH Keys]
+      responses:
+        "200":
+          description: List of SSH keys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SSHKey"
+
+  /user/ssh-keys/{keyID}:
+    delete:
+      summary: Delete an SSH key
+      operationId: deleteSSHKey
+      tags: [SSH Keys]
+      parameters:
+        - name: keyID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Key deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─── User Profile ───────────────────────────────────────────────────
+  /user/repos:
+    get:
+      summary: List repositories for the authenticated user
+      operationId: listMyRepos
+      tags: [Repositories]
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of repositories
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_RepoList"
+
+  /user/profile:
+    patch:
+      summary: Update the authenticated user's profile
+      operationId: updateProfile
+      tags: [User Profile]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_User"
+
+  /user/pinned-repos:
+    put:
+      summary: Set pinned repositories on profile
+      operationId: setPinnedRepos
+      tags: [User Profile]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetPinnedReposRequest"
+      responses:
+        "200":
+          description: Updated pinned repos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PinnedRepo"
+
+  /users/{username}:
+    get:
+      summary: Get a user's public profile
+      operationId: getUser
+      tags: [User Profile]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/username"
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_User"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/{username}/repos:
+    get:
+      summary: List a user's repositories
+      operationId: listUserRepos
+      tags: [Repositories]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/username"
+      responses:
+        "200":
+          description: List of repositories
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_RepoList"
+
+  /users/{username}/contributions:
+    get:
+      summary: Get contribution data for a user
+      operationId: getContributions
+      tags: [User Profile]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/username"
+        - name: from
+          in: query
+          description: Start date (YYYY-MM-DD). Defaults to Jan 1 of current year.
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          description: End date (YYYY-MM-DD). Defaults to today.
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Array of day counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DayCount"
+
+  /users/{username}/pinned-repos:
+    get:
+      summary: Get a user's pinned repositories
+      operationId: listPinnedRepos
+      tags: [User Profile]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/username"
+      responses:
+        "200":
+          description: Pinned repos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PinnedRepo"
+
+  /users/{username}/activity:
+    get:
+      summary: Get a user's activity feed
+      operationId: listUserActivity
+      tags: [Activity]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/username"
+        - $ref: "#/components/parameters/cursor"
+        - $ref: "#/components/parameters/limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedList"
+
+  /users/{username}/orgs:
+    get:
+      summary: List a user's public organizations
+      operationId: listPublicUserOrgs
+      tags: [Organizations]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/username"
+      responses:
+        "200":
+          description: List of org memberships
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OrgMembership"
+
+  # ─── Repositories ───────────────────────────────────────────────────
+  /repos:
+    get:
+      summary: List repositories
+      description: |
+        Authenticated users see their own repos plus public repos.
+        Unauthenticated users see public repos only.
+      operationId: listRepos
+      tags: [Repositories]
+      security: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of repositories
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_RepoList"
+    post:
+      summary: Create a repository
+      operationId: createRepo
+      tags: [Repositories]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRepoRequest"
+      responses:
+        "201":
+          description: Repository created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Repository"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /repos/{owner}/{repo}:
+    get:
+      summary: Get a repository
+      operationId: getRepo
+      tags: [Repositories]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      responses:
+        "200":
+          description: Repository details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Repository"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      summary: Update a repository
+      operationId: updateRepo
+      tags: [Repositories]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRepoRequest"
+      responses:
+        "200":
+          description: Updated repository
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Repository"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      summary: Delete a repository
+      operationId: deleteRepo
+      tags: [Repositories]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      responses:
+        "200":
+          description: Repository deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─── Code Browsing ──────────────────────────────────────────────────
+  /repos/{owner}/{repo}/tree/{ref}:
+    get:
+      summary: Get the root file tree
+      operationId: getRootTree
+      tags: [Code Browsing]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/ref"
+      responses:
+        "200":
+          description: Tree entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TreeEntry"
+
+  /repos/{owner}/{repo}/tree/{ref}/{path}:
+    get:
+      summary: Get a file tree at a path
+      operationId: getTree
+      tags: [Code Browsing]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/ref"
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tree entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TreeEntry"
+
+  /repos/{owner}/{repo}/blob/{ref}/{path}:
+    get:
+      summary: Get file content
+      operationId: getBlob
+      tags: [Code Browsing]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/ref"
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Blob content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/BlobContent"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /repos/{owner}/{repo}/raw/{ref}/{path}:
+    get:
+      summary: Get raw file content
+      operationId: getRawBlob
+      tags: [Code Browsing]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/ref"
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Raw file content
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /repos/{owner}/{repo}/blame/{ref}/{path}:
+    get:
+      summary: Get blame data for a file
+      operationId: getBlame
+      tags: [Code Browsing]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/ref"
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Blame lines
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BlameLine"
+
+  /repos/{owner}/{repo}/commits:
+    get:
+      summary: List commits
+      operationId: listCommits
+      tags: [Code Browsing]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - name: ref
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of commits
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Commit"
+                  meta:
+                    $ref: "#/components/schemas/ResponseMeta"
+
+  /repos/{owner}/{repo}/commits/{sha}:
+    get:
+      summary: Get a single commit with diff
+      operationId: getCommit
+      tags: [Code Browsing]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - name: sha
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Commit detail with diff
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/CommitDetail"
+
+  /repos/{owner}/{repo}/branches:
+    get:
+      summary: List branches
+      operationId: listBranches
+      tags: [Code Browsing]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      responses:
+        "200":
+          description: List of branches
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Branch"
+
+  # ─── Issues ─────────────────────────────────────────────────────────
+  /repos/{owner}/{repo}/issues:
+    get:
+      summary: List issues
+      operationId: listIssues
+      tags: [Issues]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - name: status
+          in: query
+          description: Filter by status (open, closed, duplicate)
+          schema:
+            type: string
+        - $ref: "#/components/parameters/cursor"
+        - $ref: "#/components/parameters/limit"
+      responses:
+        "200":
+          description: List of issues
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Issue"
+                  meta:
+                    $ref: "#/components/schemas/ResponseMeta"
+    post:
+      summary: Create an issue
+      operationId: createIssue
+      tags: [Issues]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIssueRequest"
+      responses:
+        "201":
+          description: Issue created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Issue"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /repos/{owner}/{repo}/issues/{number}:
+    get:
+      summary: Get an issue
+      operationId: getIssue
+      tags: [Issues]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/number"
+      responses:
+        "200":
+          description: Issue details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Issue"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      summary: Update an issue
+      operationId: updateIssue
+      tags: [Issues]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/number"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateIssueRequest"
+      responses:
+        "200":
+          description: Updated issue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Issue"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /repos/{owner}/{repo}/issues/{number}/comments:
+    get:
+      summary: List issue comments
+      operationId: listIssueComments
+      tags: [Issues]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/number"
+        - $ref: "#/components/parameters/cursor"
+        - $ref: "#/components/parameters/limit"
+      responses:
+        "200":
+          description: List of comments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Comment"
+                  meta:
+                    $ref: "#/components/schemas/ResponseMeta"
+    post:
+      summary: Create an issue comment
+      operationId: createIssueComment
+      tags: [Issues]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/number"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCommentRequest"
+      responses:
+        "201":
+          description: Comment created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Comment"
+
+  # ─── Pull Requests ──────────────────────────────────────────────────
+  /repos/{owner}/{repo}/pulls:
+    get:
+      summary: List pull requests
+      operationId: listPullRequests
+      tags: [Pull Requests]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - name: status
+          in: query
+          description: Filter by status (draft, open, merged, closed)
+          schema:
+            type: string
+        - $ref: "#/components/parameters/cursor"
+        - $ref: "#/components/parameters/limit"
+      responses:
+        "200":
+          description: List of pull requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PullRequest"
+                  meta:
+                    $ref: "#/components/schemas/ResponseMeta"
+    post:
+      summary: Create a pull request
+      operationId: createPullRequest
+      tags: [Pull Requests]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePullRequestRequest"
+      responses:
+        "201":
+          description: Pull request created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_PullRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /repos/{owner}/{repo}/pulls/{number}:
+    get:
+      summary: Get a pull request
+      operationId: getPullRequest
+      tags: [Pull Requests]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/number"
+      responses:
+        "200":
+          description: Pull request details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_PullRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      summary: Update a pull request
+      operationId: updatePullRequest
+      tags: [Pull Requests]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/number"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePullRequestRequest"
+      responses:
+        "200":
+          description: Updated pull request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_PullRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /repos/{owner}/{repo}/pulls/{number}/merge:
+    put:
+      summary: Merge a pull request
+      operationId: mergePullRequest
+      tags: [Pull Requests]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/number"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MergePullRequestRequest"
+      responses:
+        "200":
+          description: Pull request merged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_PullRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Already merged, not open, or merge conflict
+        "422":
+          description: Insufficient reviews or linear history required
+
+  /repos/{owner}/{repo}/pulls/{number}/diff:
+    get:
+      summary: Get pull request diff
+      operationId: getPullRequestDiff
+      tags: [Pull Requests]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/number"
+      responses:
+        "200":
+          description: Diff data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PRDiffResponse"
+
+  # ─── Reviews ────────────────────────────────────────────────────────
+  /repos/{owner}/{repo}/pulls/{number}/reviews:
+    get:
+      summary: List reviews on a pull request
+      operationId: listReviews
+      tags: [Reviews]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/number"
+      responses:
+        "200":
+          description: List of reviews
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Review"
+    post:
+      summary: Submit a review
+      operationId: createReview
+      tags: [Reviews]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/number"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReviewRequest"
+      responses:
+        "201":
+          description: Review submitted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Review"
+        "403":
+          description: Cannot review your own PR
+
+  /repos/{owner}/{repo}/pulls/{number}/threads/{threadID}/resolve:
+    put:
+      summary: Resolve or unresolve a review thread
+      operationId: resolveThread
+      tags: [Reviews]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/number"
+        - name: threadID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveThreadRequest"
+      responses:
+        "200":
+          description: Thread updated
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /repos/{owner}/{repo}/pulls/{number}/comments:
+    get:
+      summary: List pull request comments
+      operationId: listPRComments
+      tags: [Pull Requests]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/number"
+        - $ref: "#/components/parameters/cursor"
+        - $ref: "#/components/parameters/limit"
+      responses:
+        "200":
+          description: List of comments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Comment"
+                  meta:
+                    $ref: "#/components/schemas/ResponseMeta"
+    post:
+      summary: Create a pull request comment
+      operationId: createPRComment
+      tags: [Pull Requests]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/number"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCommentRequest"
+      responses:
+        "201":
+          description: Comment created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Comment"
+
+  # ─── Labels ─────────────────────────────────────────────────────────
+  /repos/{owner}/{repo}/labels:
+    get:
+      summary: List labels
+      operationId: listLabels
+      tags: [Labels]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      responses:
+        "200":
+          description: List of labels
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Label"
+    post:
+      summary: Create a label
+      operationId: createLabel
+      tags: [Labels]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLabelRequest"
+      responses:
+        "201":
+          description: Label created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Label"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /repos/{owner}/{repo}/labels/{labelID}:
+    patch:
+      summary: Update a label
+      operationId: updateLabel
+      tags: [Labels]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - name: labelID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateLabelRequest"
+      responses:
+        "200":
+          description: Updated label
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Label"
+    delete:
+      summary: Delete a label
+      operationId: deleteLabel
+      tags: [Labels]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - name: labelID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Label deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+
+  # ─── Milestones ─────────────────────────────────────────────────────
+  /repos/{owner}/{repo}/milestones:
+    get:
+      summary: List milestones
+      operationId: listMilestones
+      tags: [Milestones]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      responses:
+        "200":
+          description: List of milestones
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Milestone"
+    post:
+      summary: Create a milestone
+      operationId: createMilestone
+      tags: [Milestones]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMilestoneRequest"
+      responses:
+        "201":
+          description: Milestone created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Milestone"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /repos/{owner}/{repo}/milestones/{milestoneID}:
+    patch:
+      summary: Update a milestone
+      operationId: updateMilestone
+      tags: [Milestones]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - name: milestoneID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMilestoneRequest"
+      responses:
+        "200":
+          description: Updated milestone
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Milestone"
+    delete:
+      summary: Delete a milestone
+      operationId: deleteMilestone
+      tags: [Milestones]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - name: milestoneID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Milestone deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+
+  # ─── Branch Protection ──────────────────────────────────────────────
+  /repos/{owner}/{repo}/branch-protection:
+    get:
+      summary: List branch protection rules
+      operationId: listBranchProtection
+      tags: [Branch Protection]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      responses:
+        "200":
+          description: List of rules
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BranchProtection"
+    post:
+      summary: Create a branch protection rule
+      operationId: createBranchProtection
+      tags: [Branch Protection]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBranchProtectionRequest"
+      responses:
+        "201":
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/BranchProtection"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /repos/{owner}/{repo}/branch-protection/{ruleID}:
+    patch:
+      summary: Update a branch protection rule
+      operationId: updateBranchProtection
+      tags: [Branch Protection]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - name: ruleID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBranchProtectionRequest"
+      responses:
+        "200":
+          description: Updated rule
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/BranchProtection"
+    delete:
+      summary: Delete a branch protection rule
+      operationId: deleteBranchProtection
+      tags: [Branch Protection]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - name: ruleID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Rule deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+
+  # ─── Webhooks ───────────────────────────────────────────────────────
+  /repos/{owner}/{repo}/webhooks:
+    get:
+      summary: List webhooks
+      operationId: listWebhooks
+      tags: [Webhooks]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      responses:
+        "200":
+          description: List of webhooks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Webhook"
+    post:
+      summary: Create a webhook
+      operationId: createWebhook
+      tags: [Webhooks]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWebhookRequest"
+      responses:
+        "201":
+          description: Webhook created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Webhook"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /repos/{owner}/{repo}/webhooks/{webhookID}:
+    get:
+      summary: Get a webhook
+      operationId: getWebhook
+      tags: [Webhooks]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - name: webhookID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Webhook details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Webhook"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      summary: Update a webhook
+      operationId: updateWebhook
+      tags: [Webhooks]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - name: webhookID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWebhookRequest"
+      responses:
+        "200":
+          description: Updated webhook
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Webhook"
+    delete:
+      summary: Delete a webhook
+      operationId: deleteWebhook
+      tags: [Webhooks]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - name: webhookID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Webhook deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+
+  /repos/{owner}/{repo}/webhooks/{webhookID}/deliveries:
+    get:
+      summary: List webhook deliveries
+      operationId: listWebhookDeliveries
+      tags: [Webhooks]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - name: webhookID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/limit"
+      responses:
+        "200":
+          description: List of deliveries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/WebhookDelivery"
+
+  /repos/{owner}/{repo}/webhooks/{webhookID}/test:
+    post:
+      summary: Send a test ping to a webhook
+      operationId: testWebhook
+      tags: [Webhooks]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - name: webhookID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ping sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+
+  # ─── Watching ───────────────────────────────────────────────────────
+  /repos/{owner}/{repo}/watchers:
+    get:
+      summary: Get watch status and watcher count
+      operationId: getWatchStatus
+      tags: [Watching]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      responses:
+        "200":
+          description: Watch status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      watching:
+                        type: boolean
+                      count:
+                        type: integer
+
+  /repos/{owner}/{repo}/watch:
+    put:
+      summary: Watch a repository
+      operationId: watchRepo
+      tags: [Watching]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      responses:
+        "200":
+          description: Now watching
+    delete:
+      summary: Unwatch a repository
+      operationId: unwatchRepo
+      tags: [Watching]
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+      responses:
+        "200":
+          description: Unwatched
+
+  # ─── Activity ───────────────────────────────────────────────────────
+  /repos/{owner}/{repo}/activity:
+    get:
+      summary: List repository activity
+      operationId: listRepoActivity
+      tags: [Activity]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/owner"
+        - $ref: "#/components/parameters/repo"
+        - $ref: "#/components/parameters/cursor"
+        - $ref: "#/components/parameters/limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedList"
+
+  # ─── Notifications ──────────────────────────────────────────────────
+  /notifications:
+    get:
+      summary: List notifications
+      operationId: listNotifications
+      tags: [Notifications]
+      parameters:
+        - name: unread_only
+          in: query
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/limit"
+      responses:
+        "200":
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Notification"
+
+  /notifications/read-all:
+    post:
+      summary: Mark all notifications as read
+      operationId: markAllRead
+      tags: [Notifications]
+      responses:
+        "200":
+          description: All marked read
+
+  /notifications/{notifID}/read:
+    post:
+      summary: Mark a notification as read
+      operationId: markRead
+      tags: [Notifications]
+      parameters:
+        - name: notifID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Marked read
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /user/notification-preferences:
+    get:
+      summary: Get notification preferences
+      operationId: getNotificationPreferences
+      tags: [Notifications]
+      responses:
+        "200":
+          description: Preferences
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/NotificationPreferences"
+    put:
+      summary: Update notification preferences
+      operationId: updateNotificationPreferences
+      tags: [Notifications]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateNotificationPreferencesRequest"
+      responses:
+        "200":
+          description: Updated preferences
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/NotificationPreferences"
+
+  # ─── Organizations ──────────────────────────────────────────────────
+  /orgs:
+    post:
+      summary: Create an organization
+      operationId: createOrg
+      tags: [Organizations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrgRequest"
+      responses:
+        "201":
+          description: Organization created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Organization"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /orgs/{name}:
+    get:
+      summary: Get an organization
+      operationId: getOrg
+      tags: [Organizations]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+      responses:
+        "200":
+          description: Organization details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Organization"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      summary: Update an organization
+      operationId: updateOrg
+      tags: [Organizations]
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOrgRequest"
+      responses:
+        "200":
+          description: Updated organization
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Organization"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      summary: Delete an organization
+      operationId: deleteOrg
+      tags: [Organizations]
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+      responses:
+        "200":
+          description: Organization deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /orgs/{name}/members:
+    get:
+      summary: List organization members
+      operationId: listOrgMembers
+      tags: [Organizations]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+      responses:
+        "200":
+          description: List of members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OrgMember"
+
+  /orgs/{name}/members/{username}:
+    put:
+      summary: Add or update an organization member
+      operationId: addOrUpdateOrgMember
+      tags: [Organizations]
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+        - $ref: "#/components/parameters/username"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrgMemberRequest"
+      responses:
+        "200":
+          description: Member added/updated
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      summary: Remove an organization member
+      operationId: removeOrgMember
+      tags: [Organizations]
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+        - $ref: "#/components/parameters/username"
+      responses:
+        "200":
+          description: Member removed
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /orgs/{name}/repos:
+    get:
+      summary: List organization repositories
+      operationId: listOrgRepos
+      tags: [Organizations]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+        - $ref: "#/components/parameters/limit"
+      responses:
+        "200":
+          description: List of repos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_RepoList"
+
+  /user/orgs:
+    get:
+      summary: List the authenticated user's organizations
+      operationId: listMyOrgs
+      tags: [Organizations]
+      responses:
+        "200":
+          description: List of org memberships
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OrgMembership"
+
+  # ─── Teams ──────────────────────────────────────────────────────────
+  /orgs/{name}/teams:
+    get:
+      summary: List teams
+      operationId: listTeams
+      tags: [Teams]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+      responses:
+        "200":
+          description: List of teams
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OrgTeam"
+    post:
+      summary: Create a team
+      operationId: createTeam
+      tags: [Teams]
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTeamRequest"
+      responses:
+        "201":
+          description: Team created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/OrgTeam"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /orgs/{name}/teams/{team}:
+    get:
+      summary: Get a team
+      operationId: getTeam
+      tags: [Teams]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+        - name: team
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Team details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/OrgTeam"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      summary: Update a team
+      operationId: updateTeam
+      tags: [Teams]
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+        - name: team
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTeamRequest"
+      responses:
+        "200":
+          description: Updated team
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/OrgTeam"
+    delete:
+      summary: Delete a team
+      operationId: deleteTeam
+      tags: [Teams]
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+        - name: team
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Team deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+
+  /orgs/{name}/teams/{team}/members:
+    get:
+      summary: List team members
+      operationId: listTeamMembers
+      tags: [Teams]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+        - name: team
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of team members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OrgTeamMember"
+
+  /orgs/{name}/teams/{team}/members/{username}:
+    put:
+      summary: Add a member to a team
+      operationId: addTeamMember
+      tags: [Teams]
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+        - name: team
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/username"
+      responses:
+        "200":
+          description: Member added
+    delete:
+      summary: Remove a member from a team
+      operationId: removeTeamMember
+      tags: [Teams]
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+        - name: team
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/username"
+      responses:
+        "200":
+          description: Member removed
+
+  /orgs/{name}/teams/{team}/repos:
+    get:
+      summary: List repos assigned to a team
+      operationId: listTeamRepos
+      tags: [Teams]
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+        - name: team
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of repos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OrgTeamRepo"
+
+  /orgs/{name}/teams/{team}/repos/{repo}:
+    put:
+      summary: Add a repo to a team
+      operationId: addTeamRepo
+      tags: [Teams]
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+        - name: team
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/repo"
+      responses:
+        "200":
+          description: Repo added
+    delete:
+      summary: Remove a repo from a team
+      operationId: removeTeamRepo
+      tags: [Teams]
+      parameters:
+        - $ref: "#/components/parameters/orgName"
+        - name: team
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/repo"
+      responses:
+        "200":
+          description: Repo removed
+
+  # ─── Search ─────────────────────────────────────────────────────────
+  /search:
+    get:
+      summary: Search (GET)
+      operationId: searchGet
+      tags: [Search]
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: scope
+          in: query
+          description: "Search scope: repos, issues, pulls, code, commits"
+          schema:
+            type: string
+        - name: language
+          in: query
+          schema:
+            type: string
+        - name: repo_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/limit"
+        - name: offset
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SearchResponse"
+    post:
+      summary: Search (POST)
+      operationId: searchPost
+      tags: [Search]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SearchResponse"
+
+  /search/code/index:
+    post:
+      summary: Trigger code indexing for a repository
+      operationId: indexRepo
+      tags: [Search]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [owner, repo]
+              properties:
+                owner:
+                  type: string
+                repo:
+                  type: string
+      responses:
+        "200":
+          description: Indexing complete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+
+  # ─── Namespace ──────────────────────────────────────────────────────
+  /resolve/{name}:
+    get:
+      summary: Resolve a namespace (user or org)
+      operationId: resolveNamespace
+      tags: [Namespace]
+      security: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Resolved to user or org
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/NamespaceResult"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─── Admin ──────────────────────────────────────────────────────────
+  /admin-8bc6d1f/users:
+    get:
+      summary: List all users (admin)
+      operationId: adminListUsers
+      tags: [Admin]
+      parameters:
+        - name: q
+          in: query
+          description: Search by username, email, or name
+          schema:
+            type: string
+        - $ref: "#/components/parameters/limit"
+        - name: offset
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paginated user list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdminUser"
+                  meta:
+                    $ref: "#/components/schemas/ResponseMeta"
+
+  /admin-8bc6d1f/users/{id}:
+    get:
+      summary: Get user details (admin)
+      operationId: adminGetUser
+      tags: [Admin]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: User details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdminUserDetail"
+    put:
+      summary: Update a user (admin)
+      operationId: adminUpdateUser
+      tags: [Admin]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_admin:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated user
+    delete:
+      summary: Delete a user (admin)
+      operationId: adminDeleteUser
+      tags: [Admin]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: User deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+
+  /admin-8bc6d1f/stats:
+    get:
+      summary: Get system statistics (admin)
+      operationId: adminGetStats
+      tags: [Admin]
+      responses:
+        "200":
+          description: System stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdminStats"
+
+  /admin-8bc6d1f/jobs:
+    get:
+      summary: List recent webhook deliveries (admin)
+      operationId: adminListJobs
+      tags: [Admin]
+      parameters:
+        - $ref: "#/components/parameters/limit"
+      responses:
+        "200":
+          description: List of deliveries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdminDelivery"
+
+  /admin-8bc6d1f/reindex-commits:
+    post:
+      summary: Trigger commit re-indexing for all repos (admin)
+      operationId: adminReindexCommits
+      tags: [Admin]
+      responses:
+        "202":
+          description: Indexing started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataResponse_Status"
+        "409":
+          description: Already running
+
+# ═══════════════════════════════════════════════════════════════════════
+# Components
+# ═══════════════════════════════════════════════════════════════════════
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Session cookie set by login/register endpoints
+    bearerToken:
+      type: http
+      scheme: bearer
+      description: API token created via /api/v1/auth/tokens
+
+  parameters:
+    owner:
+      name: owner
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Repository owner (username or org name)
+    repo:
+      name: repo
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Repository name
+    ref:
+      name: ref
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Git ref (branch, tag, or commit SHA)
+    number:
+      name: number
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Issue or pull request number
+    username:
+      name: username
+      in: path
+      required: true
+      schema:
+        type: string
+    orgName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Organization name
+    cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+      description: Pagination cursor
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+      description: Maximum number of results
+
+  responses:
+    BadRequest:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Not authenticated
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    PaginatedList:
+      description: Paginated list response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                type: array
+                items:
+                  type: object
+              meta:
+                $ref: "#/components/schemas/ResponseMeta"
+
+  schemas:
+    # ─── Envelope ────────────────────────────────────────────────────
+    ErrorResponse:
+      type: object
+      properties:
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              code:
+                type: string
+              message:
+                type: string
+              field:
+                type: string
+
+    ResponseMeta:
+      type: object
+      properties:
+        total:
+          type: integer
+        next_cursor:
+          type: string
+        prev_cursor:
+          type: string
+
+    # ─── Generic Data Wrappers ───────────────────────────────────────
+    DataResponse_Status:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            status:
+              type: string
+
+    DataResponse_User:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/User"
+
+    DataResponse_Repository:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/Repository"
+
+    DataResponse_RepoList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Repository"
+
+    DataResponse_Issue:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/Issue"
+
+    DataResponse_PullRequest:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/PullRequest"
+
+    DataResponse_APIToken:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/APIToken"
+
+    DataResponse_SSHKey:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/SSHKey"
+
+    # ─── User ────────────────────────────────────────────────────────
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+        avatar_url:
+          type: string
+        bio:
+          type: string
+        is_admin:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateUserRequest:
+      type: object
+      required: [username, email, password]
+      properties:
+        username:
+          type: string
+          minLength: 2
+          maxLength: 40
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        full_name:
+          type: string
+
+    LoginRequest:
+      type: object
+      required: [login, password]
+      properties:
+        login:
+          type: string
+          description: Username or email
+        password:
+          type: string
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        full_name:
+          type: string
+        bio:
+          type: string
+        avatar_url:
+          type: string
+
+    # ─── API Token ───────────────────────────────────────────────────
+    APIToken:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        token:
+          type: string
+          description: Only present in creation response
+        scopes:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    CreateTokenRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+
+    # ─── SSH Key ─────────────────────────────────────────────────────
+    SSHKey:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        fingerprint:
+          type: string
+        key_type:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CreateSSHKeyRequest:
+      type: object
+      required: [title, public_key]
+      properties:
+        title:
+          type: string
+        public_key:
+          type: string
+
+    # ─── Repository ──────────────────────────────────────────────────
+    Repository:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_id:
+          type: string
+          format: uuid
+        owner_name:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        default_branch:
+          type: string
+        visibility:
+          type: string
+          enum: [public, private]
+        language_stats:
+          type: object
+        topics:
+          type: array
+          items:
+            type: string
+        stars_count:
+          type: integer
+        forks_count:
+          type: integer
+        clone_url:
+          type: string
+        ssh_url:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateRepoRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+        description:
+          type: string
+        visibility:
+          type: string
+          enum: [public, private]
+          default: public
+        default_branch:
+          type: string
+          default: main
+        topics:
+          type: array
+          items:
+            type: string
+        auto_init:
+          type: boolean
+          default: false
+        org_name:
+          type: string
+          description: If set, create the repo under this organization
+
+    UpdateRepoRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        visibility:
+          type: string
+          enum: [public, private]
+        default_branch:
+          type: string
+        topics:
+          type: array
+          items:
+            type: string
+
+    # ─── Git Objects ─────────────────────────────────────────────────
+    TreeEntry:
+      type: object
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        type:
+          type: string
+          enum: [blob, tree]
+        mode:
+          type: string
+        sha:
+          type: string
+        size:
+          type: integer
+
+    BlobContent:
+      type: object
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        sha:
+          type: string
+        size:
+          type: integer
+        content:
+          type: string
+        encoding:
+          type: string
+          enum: [utf-8, base64]
+        is_binary:
+          type: boolean
+
+    BlameLine:
+      type: object
+      properties:
+        commit_sha:
+          type: string
+        author_name:
+          type: string
+        author_email:
+          type: string
+        date:
+          type: string
+          format: date-time
+        line_number:
+          type: integer
+        line_content:
+          type: string
+
+    Commit:
+      type: object
+      properties:
+        sha:
+          type: string
+        message:
+          type: string
+        author:
+          $ref: "#/components/schemas/GitUser"
+        committer:
+          $ref: "#/components/schemas/GitUser"
+        parents:
+          type: array
+          items:
+            type: string
+        tree_sha:
+          type: string
+        date:
+          type: string
+          format: date-time
+
+    CommitDetail:
+      allOf:
+        - $ref: "#/components/schemas/Commit"
+        - type: object
+          properties:
+            files:
+              type: array
+              items:
+                $ref: "#/components/schemas/DiffFile"
+            stats:
+              type: object
+              properties:
+                total_files:
+                  type: integer
+                total_additions:
+                  type: integer
+                total_deletions:
+                  type: integer
+
+    GitUser:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        date:
+          type: string
+          format: date-time
+
+    DiffFile:
+      type: object
+      properties:
+        path:
+          type: string
+        old_path:
+          type: string
+        status:
+          type: string
+          enum: [added, modified, deleted, renamed]
+        insertions:
+          type: integer
+        deletions:
+          type: integer
+        patch:
+          type: string
+
+    Branch:
+      type: object
+      properties:
+        name:
+          type: string
+        sha:
+          type: string
+        is_head:
+          type: boolean
+
+    # ─── Issue ───────────────────────────────────────────────────────
+    Issue:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        repo_id:
+          type: string
+          format: uuid
+        number:
+          type: integer
+        author_id:
+          type: string
+          format: uuid
+        author_name:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        status:
+          type: string
+          enum: [open, closed, duplicate]
+        labels:
+          type: array
+          items:
+            type: string
+        assignees:
+          type: array
+          items:
+            type: string
+            format: uuid
+        milestone_id:
+          type: string
+          format: uuid
+          nullable: true
+        priority:
+          type: string
+          enum: [critical, high, medium, low, none]
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateIssueRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          maxLength: 500
+        body:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+        priority:
+          type: string
+          enum: [critical, high, medium, low, none]
+        assignees:
+          type: array
+          items:
+            type: string
+        milestone_id:
+          type: string
+          format: uuid
+
+    UpdateIssueRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        body:
+          type: string
+        status:
+          type: string
+          enum: [open, closed, duplicate]
+        labels:
+          type: array
+          items:
+            type: string
+        priority:
+          type: string
+          enum: [critical, high, medium, low, none]
+        assignees:
+          type: array
+          items:
+            type: string
+        milestone_id:
+          type: string
+          format: uuid
+
+    # ─── Pull Request ────────────────────────────────────────────────
+    PullRequest:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        repo_id:
+          type: string
+          format: uuid
+        number:
+          type: integer
+        author_id:
+          type: string
+          format: uuid
+        author_name:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        source_branch:
+          type: string
+        target_branch:
+          type: string
+        status:
+          type: string
+          enum: [draft, open, merged, closed]
+        intent:
+          $ref: "#/components/schemas/PRIntent"
+        diff_stats:
+          type: object
+        review_summary:
+          type: object
+        merge_strategy:
+          type: string
+          nullable: true
+        merged_by:
+          type: string
+          format: uuid
+          nullable: true
+        merged_by_name:
+          type: string
+        merged_at:
+          type: string
+          format: date-time
+          nullable: true
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PRIntent:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [feature, bugfix, refactor, chore]
+        scope:
+          type: string
+        components:
+          type: array
+          items:
+            type: string
+
+    CreatePullRequestRequest:
+      type: object
+      required: [title, source_branch, target_branch]
+      properties:
+        title:
+          type: string
+          maxLength: 500
+        body:
+          type: string
+        source_branch:
+          type: string
+        target_branch:
+          type: string
+        draft:
+          type: boolean
+          default: false
+        intent:
+          $ref: "#/components/schemas/PRIntent"
+
+    UpdatePullRequestRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        body:
+          type: string
+        target_branch:
+          type: string
+        status:
+          type: string
+          enum: [draft, open, closed]
+        intent:
+          $ref: "#/components/schemas/PRIntent"
+
+    MergePullRequestRequest:
+      type: object
+      properties:
+        strategy:
+          type: string
+          enum: [merge, squash, rebase]
+          default: merge
+        message:
+          type: string
+          description: Custom merge commit message (optional)
+        delete_branch:
+          type: boolean
+          default: false
+
+    PRDiffResponse:
+      type: object
+      properties:
+        commits:
+          type: array
+          items:
+            $ref: "#/components/schemas/Commit"
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiffFile"
+        stats:
+          type: object
+          properties:
+            total_commits:
+              type: integer
+            total_files:
+              type: integer
+            total_additions:
+              type: integer
+            total_deletions:
+              type: integer
+
+    # ─── Review ──────────────────────────────────────────────────────
+    Review:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        pr_id:
+          type: string
+          format: uuid
+        author_id:
+          type: string
+          format: uuid
+        author_name:
+          type: string
+        type:
+          type: string
+          enum: [approval, changes_requested, comment, dismissal]
+        body:
+          type: string
+        comments:
+          type: array
+          items:
+            $ref: "#/components/schemas/InlineComment"
+        submitted_at:
+          type: string
+          format: date-time
+
+    CreateReviewRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [approval, changes_requested, comment]
+        body:
+          type: string
+        comments:
+          type: array
+          items:
+            $ref: "#/components/schemas/InlineCommentInput"
+
+    InlineComment:
+      type: object
+      properties:
+        path:
+          type: string
+        line:
+          type: integer
+        side:
+          type: string
+          enum: [left, right]
+        body:
+          type: string
+        thread_id:
+          type: string
+        resolved:
+          type: boolean
+
+    InlineCommentInput:
+      type: object
+      required: [path, line, body]
+      properties:
+        path:
+          type: string
+        line:
+          type: integer
+        side:
+          type: string
+          enum: [left, right]
+        body:
+          type: string
+        thread_id:
+          type: string
+        resolved:
+          type: boolean
+
+    ResolveThreadRequest:
+      type: object
+      required: [resolved]
+      properties:
+        resolved:
+          type: boolean
+
+    # ─── Comment ─────────────────────────────────────────────────────
+    Comment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        repo_id:
+          type: string
+          format: uuid
+        issue_id:
+          type: string
+          format: uuid
+          nullable: true
+        pr_id:
+          type: string
+          format: uuid
+          nullable: true
+        author_id:
+          type: string
+          format: uuid
+        author_name:
+          type: string
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateCommentRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+
+    # ─── Label ───────────────────────────────────────────────────────
+    Label:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        repo_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        color:
+          type: string
+          description: Hex color (e.g. #ff0000)
+        description:
+          type: string
+
+    CreateLabelRequest:
+      type: object
+      required: [name, color]
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        color:
+          type: string
+        description:
+          type: string
+
+    UpdateLabelRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        color:
+          type: string
+        description:
+          type: string
+
+    # ─── Milestone ───────────────────────────────────────────────────
+    Milestone:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        repo_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        due_date:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CreateMilestoneRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        due_date:
+          type: string
+          format: date-time
+
+    UpdateMilestoneRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        due_date:
+          type: string
+          format: date-time
+        status:
+          type: string
+
+    # ─── Branch Protection ───────────────────────────────────────────
+    BranchProtection:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        repo_id:
+          type: string
+          format: uuid
+        branch_pattern:
+          type: string
+        required_reviews:
+          type: integer
+        require_linear:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateBranchProtectionRequest:
+      type: object
+      required: [branch_pattern]
+      properties:
+        branch_pattern:
+          type: string
+          maxLength: 255
+        required_reviews:
+          type: integer
+          default: 0
+        require_linear:
+          type: boolean
+          default: false
+
+    UpdateBranchProtectionRequest:
+      type: object
+      properties:
+        required_reviews:
+          type: integer
+        require_linear:
+          type: boolean
+
+    # ─── Webhook ─────────────────────────────────────────────────────
+    Webhook:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        repo_id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+        active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateWebhookRequest:
+      type: object
+      required: [url, events]
+      properties:
+        url:
+          type: string
+          format: uri
+        secret:
+          type: string
+        events:
+          type: array
+          items:
+            type: string
+          description: "Event types: issue.opened, issue.closed, pr.opened, pr.closed, pr.merged, review.submitted, comment.created, push"
+        active:
+          type: boolean
+          default: true
+
+    UpdateWebhookRequest:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+        secret:
+          type: string
+        events:
+          type: array
+          items:
+            type: string
+        active:
+          type: boolean
+
+    WebhookDelivery:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        webhook_id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+        payload:
+          type: object
+        response_status:
+          type: integer
+          nullable: true
+        success:
+          type: boolean
+        attempts:
+          type: integer
+        duration_ms:
+          type: integer
+        delivered_at:
+          type: string
+          format: date-time
+
+    # ─── Notification ────────────────────────────────────────────────
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        link:
+          type: string
+        read:
+          type: boolean
+        metadata:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+
+    NotificationPreferences:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        pr_review:
+          type: boolean
+        pr_merged:
+          type: boolean
+        pr_comment:
+          type: boolean
+        issue_comment:
+          type: boolean
+        mention:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+
+    UpdateNotificationPreferencesRequest:
+      type: object
+      properties:
+        pr_review:
+          type: boolean
+        pr_merged:
+          type: boolean
+        pr_comment:
+          type: boolean
+        issue_comment:
+          type: boolean
+        mention:
+          type: boolean
+
+    # ─── Organization ────────────────────────────────────────────────
+    Organization:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        display_name:
+          type: string
+        description:
+          type: string
+        avatar_url:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateOrgRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        display_name:
+          type: string
+        description:
+          type: string
+
+    UpdateOrgRequest:
+      type: object
+      properties:
+        display_name:
+          type: string
+        description:
+          type: string
+        avatar_url:
+          type: string
+
+    OrgMember:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        full_name:
+          type: string
+        avatar_url:
+          type: string
+        role:
+          type: string
+          enum: [owner, member]
+
+    OrgMemberRequest:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [owner, member]
+          default: member
+
+    OrgMembership:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        display_name:
+          type: string
+        avatar_url:
+          type: string
+        role:
+          type: string
+
+    NamespaceResult:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [user, org]
+        data:
+          type: object
+          description: User or Organization object
+
+    # ─── Team ────────────────────────────────────────────────────────
+    OrgTeam:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        org_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        permission:
+          type: string
+          enum: [read, triage, write, admin]
+        member_count:
+          type: integer
+        repo_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateTeamRequest:
+      type: object
+      required: [name, permission]
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        description:
+          type: string
+        permission:
+          type: string
+          enum: [read, triage, write, admin]
+
+    UpdateTeamRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        permission:
+          type: string
+          enum: [read, triage, write, admin]
+
+    OrgTeamMember:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        full_name:
+          type: string
+        avatar_url:
+          type: string
+
+    OrgTeamRepo:
+      type: object
+      properties:
+        repo_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        visibility:
+          type: string
+
+    # ─── Profile ─────────────────────────────────────────────────────
+    DayCount:
+      type: object
+      properties:
+        date:
+          type: string
+          description: YYYY-MM-DD
+        count:
+          type: integer
+
+    PinnedRepo:
+      type: object
+      properties:
+        position:
+          type: integer
+        repository:
+          $ref: "#/components/schemas/Repository"
+
+    SetPinnedReposRequest:
+      type: object
+      required: [repo_ids]
+      properties:
+        repo_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 6
+
+    # ─── Search ──────────────────────────────────────────────────────
+    SearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+        scope:
+          type: string
+          description: "Search scope: repos, issues, pulls, code, commits"
+        repo_id:
+          type: string
+          format: uuid
+        language:
+          type: string
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    SearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+        facets:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/Facet"
+        total:
+          type: integer
+
+    SearchResult:
+      type: object
+      properties:
+        type:
+          type: string
+        id:
+          type: string
+        title:
+          type: string
+        snippet:
+          type: string
+        url:
+          type: string
+        score:
+          type: number
+        meta:
+          type: object
+
+    Facet:
+      type: object
+      properties:
+        value:
+          type: string
+        count:
+          type: integer
+
+    # ─── Admin ───────────────────────────────────────────────────────
+    AdminUser:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+        full_name:
+          type: string
+        is_admin:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        repo_count:
+          type: integer
+
+    AdminUserDetail:
+      allOf:
+        - $ref: "#/components/schemas/AdminUser"
+        - type: object
+          properties:
+            bio:
+              type: string
+            avatar_url:
+              type: string
+
+    AdminStats:
+      type: object
+      properties:
+        user_count:
+          type: integer
+        repo_count:
+          type: integer
+        commit_count:
+          type: integer
+        issue_count:
+          type: integer
+        pr_count:
+          type: integer
+        disk_usage:
+          type: string
+
+    AdminDelivery:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        webhook_id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+        response_status:
+          type: integer
+          nullable: true
+        success:
+          type: boolean
+        attempts:
+          type: integer
+        duration_ms:
+          type: integer
+        delivered_at:
+          type: string
+          format: date-time
+        webhook_url:
+          type: string
+        repo_name:
+          type: string
+        owner_name:
+          type: string
