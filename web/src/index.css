@@ -2944,6 +2944,103 @@ a.settings-tab-link {
   margin-top: 2px;
 }
 
+/* Notification preferences */
+
+.notification-pref-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.notification-pref-row:last-child {
+  border-bottom: none;
+}
+
+.notification-pref-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.notification-pref-info strong {
+  font-size: 0.875rem;
+}
+
+.notification-pref-info .muted {
+  font-size: 0.8125rem;
+}
+
+/* Toggle switch */
+
+.toggle-switch {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.toggle-switch.active {
+  background: var(--btn-primary-bg);
+  border-color: var(--btn-primary-bg);
+}
+
+.toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+}
+
+.toggle-switch.active .toggle-knob {
+  transform: translateX(20px);
+}
+
+/* Watch button */
+
+.watch-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.watch-btn:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--text-muted);
+}
+
+.watch-btn.watching {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.watch-count {
+  background: var(--bg-tertiary);
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 /* Confirmation dialog */
 
 .confirm-overlay {

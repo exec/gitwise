@@ -160,7 +160,7 @@ func (s *Server) initServices() {
 	s.pullHandler = handlers.NewPullHandler(s.repoSvc, s.pullSvc, s.reviewSvc, s.commentSvc, s.webhookSvc, s.notifSvc, s.userSvc)
 	s.labelHandler = handlers.NewLabelHandler(s.repoSvc, s.labelSvc)
 	s.milestoneHandler = handlers.NewMilestoneHandler(s.repoSvc, s.milestoneSvc)
-	s.notifHandler = handlers.NewNotificationHandler(s.notifSvc)
+	s.notifHandler = handlers.NewNotificationHandler(s.notifSvc, s.repoSvc)
 	s.protectionHandler = handlers.NewProtectionHandler(s.repoSvc, s.protectionSvc)
 	s.profileHandler = handlers.NewProfileHandler(s.userSvc)
 	s.activityHandler = handlers.NewActivityHandler(s.repoSvc, s.activitySvc, s.userSvc)
@@ -362,6 +362,11 @@ func (s *Server) setupRoutes() {
 				r.With(middleware.RequireAuth).Patch("/milestones/{milestoneID}", s.milestoneHandler.Update)
 				r.With(middleware.RequireAuth).Delete("/milestones/{milestoneID}", s.milestoneHandler.Delete)
 
+				// Repository watching
+				r.Get("/watchers", s.notifHandler.GetWatchStatus)
+				r.With(middleware.RequireAuth).Put("/watch", s.notifHandler.WatchRepo)
+				r.With(middleware.RequireAuth).Delete("/watch", s.notifHandler.UnwatchRepo)
+
 				// Activity feed
 				r.Get("/activity", s.activityHandler.ListByRepo)
 
@@ -391,6 +396,13 @@ func (s *Server) setupRoutes() {
 			r.Get("/", s.notifHandler.List)
 			r.Post("/read-all", s.notifHandler.MarkAllRead)
 			r.Post("/{notifID}/read", s.notifHandler.MarkRead)
+		})
+
+		// Notification preferences (authenticated)
+		r.Route("/user/notification-preferences", func(r chi.Router) {
+			r.Use(middleware.RequireAuth)
+			r.Get("/", s.notifHandler.GetPreferences)
+			r.Put("/", s.notifHandler.UpdatePreferences)
 		})
 
 		// User profiles
