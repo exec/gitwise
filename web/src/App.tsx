@@ -20,6 +20,7 @@ import OwnerPage from "./pages/OwnerPage";
 import UserSettingsPage from "./pages/UserSettingsPage";
 import RepoSettingsPage from "./pages/RepoSettingsPage";
 import AdminPage from "./pages/AdminPage";
+import ImportPage from "./pages/ImportPage";
 import NotFoundPage from "./pages/NotFoundPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -69,6 +70,14 @@ export default function App() {
           element={
             <RequireAuth>
               <NewOrgPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/new/import"
+          element={
+            <RequireAuth>
+              <ImportPage />
             </RequireAuth>
           }
         />

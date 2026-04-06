@@ -157,6 +157,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     <Link to="/new/org" className="user-dropdown-item" onClick={() => setDropdownOpen(false)}>
                       New organization
                     </Link>
+                    <Link to="/new/import" className="user-dropdown-item" onClick={() => setDropdownOpen(false)}>
+                      Import repository
+                    </Link>
                     {orgsQuery.data && orgsQuery.data.length > 0 && (
                       <>
                         <div className="user-dropdown-divider" />
