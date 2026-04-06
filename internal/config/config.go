@@ -10,6 +10,7 @@ import (
 type Config struct {
 	Port        int
 	Host        string
+	SSHPort     int
 	Database    DatabaseConfig
 	Redis       RedisConfig
 	Git         GitConfig
@@ -74,8 +75,9 @@ func Load() *Config {
 	githubSecret := envStr("GITWISE_GITHUB_CLIENT_SECRET", "")
 
 	return &Config{
-		Port:   envInt("GITWISE_PORT", 3000),
-		Host:   envStr("GITWISE_HOST", "0.0.0.0"),
+		Port:    envInt("GITWISE_PORT", 3000),
+		Host:    envStr("GITWISE_HOST", "0.0.0.0"),
+		SSHPort: envInt("GITWISE_SSH_PORT", 2222),
 		Secret: envStr("GITWISE_SECRET", "change-me-in-production"),
 		BaseURL: envStr("GITWISE_BASE_URL", "http://localhost:3000"),
 		GitHubOAuth: GitHubOAuthConfig{

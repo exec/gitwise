@@ -189,14 +189,25 @@ func (s *Server) initServices() {
 	s.sshkeyHandler = handlers.NewSSHKeyHandler(s.sshkeySvc)
 
 	// SSH server (git over SSH) — auth via stored SSH keys
-	s.gitSSH = git.NewSSHServer(s.gitSvc, ":2222", func(key gossh.PublicKey) (string, bool) {
-		fp := sshkey.Fingerprint(key)
-		username, err := s.sshkeySvc.LookupByFingerprint(context.Background(), fp)
-		if err != nil {
-			return "", false
-		}
-		return username, true
-	})
+	sshAddr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.SSHPort)
+	hostKeyPath := filepath.Join(s.cfg.Git.ReposPath, ".ssh_host_ed25519_key")
+	s.gitSSH = git.NewSSHServer(s.gitSvc, sshAddr, hostKeyPath,
+		func(key gossh.PublicKey) (string, bool) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			fp := sshkey.Fingerprint(key)
+			username, err := s.sshkeySvc.LookupByFingerprint(ctx, fp)
+			if err != nil {
+				return "", false
+			}
+			return username, true
+		},
+		func(username, owner, repoName, service string) bool {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return s.checkSSHAccess(ctx, username, owner, repoName, service)
+		},
+	)
 
 	// Commit indexer
 	s.commitIndexer = commit.NewIndexer(s.db, s.gitSvc)
@@ -426,7 +437,54 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.gitSSH != nil {
+		if err := s.gitSSH.Shutdown(); err != nil {
+			slog.Error("SSH server shutdown error", "error", err)
+		}
+	}
 	return s.http.Shutdown(ctx)
+}
+
+// checkSSHAccess verifies that the authenticated SSH user can access the repo.
+// For git-upload-pack (read): owner match, public repo, or collaborator.
+// For git-receive-pack (write): owner match or collaborator with write/admin role.
+func (s *Server) checkSSHAccess(ctx context.Context, username, owner, repoName, service string) bool {
+	// Owner always has full access
+	if strings.EqualFold(username, owner) {
+		return true
+	}
+
+	// Look up the repo (checks existence + visibility)
+	user, err := s.userSvc.GetByUsername(ctx, username)
+	if err != nil {
+		return false
+	}
+
+	repo, err := s.repoSvc.GetByOwnerAndName(ctx, owner, repoName, &user.ID)
+	if err != nil {
+		return false
+	}
+
+	// Public repos are readable by any authenticated user
+	if service == "git-upload-pack" && repo.Visibility == "public" {
+		return true
+	}
+
+	// Check collaborator role
+	var role string
+	err = s.db.QueryRow(ctx, `
+		SELECT role FROM repo_collaborators
+		WHERE repo_id = $1 AND user_id = $2`, repo.ID, user.ID,
+	).Scan(&role)
+	if err != nil {
+		return false
+	}
+
+	if service == "git-upload-pack" {
+		return true // any collaborator role grants read
+	}
+	// git-receive-pack requires write or admin
+	return role == "write" || role == "admin"
 }
 
 // EmbeddingService returns the embedding service for use by the embedding worker.

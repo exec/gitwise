@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/ssh"
 
@@ -51,10 +52,7 @@ func (s *Service) Add(ctx context.Context, userID uuid.UUID, req models.CreateSS
 	fingerprint := Fingerprint(parsed)
 	keyType := parsed.Type()
 
-	// If title was not provided but the key has a comment, use the comment.
-	if title == "" && comment != "" {
-		title = comment
-	}
+	_ = comment // comment is available but title is already required
 
 	key := &models.SSHKey{
 		ID:          uuid.New(),
@@ -71,7 +69,8 @@ func (s *Service) Add(ctx context.Context, userID uuid.UUID, req models.CreateSS
 		key.ID, key.UserID, key.Name, key.Fingerprint, pubKeyStr, key.CreatedAt,
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique constraint") {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return nil, ErrDuplicateKey
 		}
 		return nil, fmt.Errorf("insert ssh key: %w", err)
