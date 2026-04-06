@@ -14,9 +14,9 @@ services:
       GITWISE_BASE_URL: ${GITWISE_BASE_URL:-https://gitwise.byexec.com}
       GITWISE_GITHUB_CLIENT_ID: ${GITWISE_GITHUB_CLIENT_ID:-}
       GITWISE_GITHUB_CLIENT_SECRET: ${GITWISE_GITHUB_CLIENT_SECRET:-}
-      GITWISE_SSH_PORT: 2222
+      GITWISE_SSH_PORT: 22
     ports:
-      - "2222:2222"
+      - "22:22"
     volumes:
       - repo_data:/data/repos
     depends_on:
