@@ -38,9 +38,10 @@ type GitHubUser struct {
 
 // Service handles OAuth2 flows for external providers.
 type Service struct {
-	cfg   config.GitHubOAuthConfig
-	base  string // base URL for callback
-	redis *redis.Client
+	cfg    config.GitHubOAuthConfig
+	base   string // base URL for callback
+	redis  *redis.Client
+	client *http.Client
 }
 
 // NewService creates a new OAuth service.
@@ -48,6 +49,7 @@ func NewService(cfg config.GitHubOAuthConfig, baseURL string, rdb *redis.Client)
 	return &Service{
 		cfg:   cfg,
 		base:  strings.TrimRight(baseURL, "/"),
+		client: &http.Client{Timeout: 15 * time.Second},
 		redis: rdb,
 	}
 }
@@ -103,13 +105,13 @@ func (s *Service) ExchangeGitHubCode(ctx context.Context, code string) (*GitHubU
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("exchange code: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MB limit
 	if err != nil {
 		return nil, "", fmt.Errorf("read token response: %w", err)
 	}
@@ -148,7 +150,7 @@ func (s *Service) fetchGitHubUser(ctx context.Context, accessToken string) (*Git
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch github user: %w", err)
 	}
@@ -181,7 +183,7 @@ func (s *Service) fetchPrimaryEmail(ctx context.Context, accessToken, login stri
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := s.client.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		if resp != nil {
 			resp.Body.Close()

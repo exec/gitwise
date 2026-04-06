@@ -169,7 +169,7 @@ func (h *AuthHandler) DeleteToken(w http.ResponseWriter, r *http.Request) {
 
 // ListProviders returns the list of enabled OAuth providers.
 func (h *AuthHandler) ListProviders(w http.ResponseWriter, r *http.Request) {
-	var providers []string
+	providers := []string{}
 	if h.oauth != nil {
 		providers = append(providers, "github")
 	}

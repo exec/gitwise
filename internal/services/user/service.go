@@ -104,21 +104,27 @@ func (s *Service) FindOrCreateByOAuth(ctx context.Context, provider, providerID,
 		return nil, fmt.Errorf("lookup oauth account: %w", err)
 	}
 
-	// 2. Check if a user with this email already exists (link account).
+	// 2. Check if a user with this email already exists.
+	// Only auto-link if the user has no password (OAuth-only account).
+	// Password-protected accounts require the user to link manually to
+	// prevent account takeover via GitHub email spoofing.
 	existingUser := &models.User{}
+	var hasPassword bool
 	err = s.db.QueryRow(ctx, `
-		SELECT id, username, email, full_name, avatar_url, bio, is_admin, created_at, updated_at
+		SELECT id, username, email, (password IS NOT NULL AND password != '') AS has_pw,
+		       full_name, avatar_url, bio, is_admin, created_at, updated_at
 		FROM users WHERE email = $1`, email,
 	).Scan(
-		&existingUser.ID, &existingUser.Username, &existingUser.Email,
+		&existingUser.ID, &existingUser.Username, &existingUser.Email, &hasPassword,
 		&existingUser.FullName, &existingUser.AvatarURL, &existingUser.Bio,
 		&existingUser.IsAdmin, &existingUser.CreatedAt, &existingUser.UpdatedAt,
 	)
-	if err == nil {
-		// Link oauth account to existing user.
+	if err == nil && !hasPassword {
+		// Safe to auto-link: this is an OAuth-only account with the same email.
 		_, err = s.db.Exec(ctx, `
 			INSERT INTO oauth_accounts (id, user_id, provider, provider_id, access_token, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (provider, provider_id) DO UPDATE SET access_token = $5`,
 			uuid.New(), existingUser.ID, provider, providerID, accessToken, time.Now(),
 		)
 		if err != nil {
@@ -126,15 +132,24 @@ func (s *Service) FindOrCreateByOAuth(ctx context.Context, provider, providerID,
 		}
 		return existingUser, nil
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("lookup user by email: %w", err)
 	}
+	// If hasPassword is true, fall through to create a new account —
+	// the user can link their GitHub later from settings.
 
-	// 3. Create a new user. Resolve username conflicts by appending numeric suffix.
+	// 3. Create a new user inside a transaction to prevent race conditions.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin oauth tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Resolve username conflicts by appending numeric suffix (capped at 100).
 	finalUsername := username
-	for i := 1; ; i++ {
+	for i := 1; i <= 100; i++ {
 		var exists bool
-		err = s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)`, finalUsername).Scan(&exists)
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)`, finalUsername).Scan(&exists)
 		if err != nil {
 			return nil, fmt.Errorf("check username: %w", err)
 		}
@@ -142,6 +157,9 @@ func (s *Service) FindOrCreateByOAuth(ctx context.Context, provider, providerID,
 			break
 		}
 		finalUsername = fmt.Sprintf("%s%d", username, i)
+		if i == 100 {
+			return nil, fmt.Errorf("%w: could not find available username", ErrInvalidInput)
+		}
 	}
 
 	now := time.Now()
@@ -153,7 +171,7 @@ func (s *Service) FindOrCreateByOAuth(ctx context.Context, provider, providerID,
 		AvatarURL: avatarURL,
 	}
 
-	_, err = s.db.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		INSERT INTO users (id, username, email, password, full_name, avatar_url, created_at, updated_at)
 		VALUES ($1, $2, $3, NULL, $4, $5, $6, $6)`,
 		newUser.ID, newUser.Username, newUser.Email, newUser.FullName, newUser.AvatarURL, now,
@@ -162,14 +180,19 @@ func (s *Service) FindOrCreateByOAuth(ctx context.Context, provider, providerID,
 		return nil, fmt.Errorf("create oauth user: %w", err)
 	}
 
-	// Link oauth account.
-	_, err = s.db.Exec(ctx, `
+	// Link oauth account (ON CONFLICT handles concurrent race).
+	_, err = tx.Exec(ctx, `
 		INSERT INTO oauth_accounts (id, user_id, provider, provider_id, access_token, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (provider, provider_id) DO UPDATE SET access_token = $5, user_id = $2`,
 		uuid.New(), newUser.ID, provider, providerID, accessToken, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create oauth link: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit oauth tx: %w", err)
 	}
 
 	return newUser, nil
@@ -179,7 +202,7 @@ func (s *Service) Authenticate(ctx context.Context, login, password string) (*mo
 	login = strings.ToLower(login)
 	user := &models.User{}
 	err := s.db.QueryRow(ctx, `
-		SELECT id, username, email, password, full_name, avatar_url, bio, is_admin, created_at, updated_at
+		SELECT id, username, email, COALESCE(password, ''), full_name, avatar_url, bio, is_admin, created_at, updated_at
 		FROM users WHERE username = $1 OR email = $1`, login,
 	).Scan(
 		&user.ID, &user.Username, &user.Email, &user.Password,
