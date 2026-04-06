@@ -101,6 +101,7 @@ type Server struct {
 	webhookHandler   *handlers.WebhookHandler
 	sshkeyHandler    *handlers.SSHKeyHandler
 	twoFactorHandler *handlers.TwoFactorHandler
+	adminHandler     *handlers.AdminHandler
 
 	// Git protocol
 	gitHTTP *git.HTTPHandler
@@ -246,6 +247,9 @@ func (s *Server) initServices() {
 
 	// Commit indexer
 	s.commitIndexer = commit.NewIndexer(s.db, s.gitSvc)
+
+	// Admin handler (after commitIndexer is initialized)
+	s.adminHandler = handlers.NewAdminHandler(s.db, s.userSvc, s.commitIndexer)
 
 	// Git HTTP protocol
 	s.gitHTTP = git.NewHTTPHandler(s.gitSvc, func(username, password string) (string, bool) {
@@ -478,8 +482,18 @@ func (s *Server) setupRoutes() {
 		r.Post("/search", s.searchHandler.Search)
 		r.With(middleware.RequireAuth).Post("/search/code/index", s.searchHandler.IndexRepo)
 
-		// Admin: backfill commit index for all repos
-		r.With(middleware.RequireAuth).Post("/admin/index-commits", s.handleIndexAllCommits)
+		// Admin panel (secret path + auth + admin check)
+		r.Route("/admin-8bc6d1f", func(r chi.Router) {
+			r.Use(middleware.RequireAuth)
+			r.Use(middleware.RequireAdmin(s.userSvc))
+			r.Get("/users", s.adminHandler.ListUsers)
+			r.Get("/users/{id}", s.adminHandler.GetUser)
+			r.Put("/users/{id}", s.adminHandler.UpdateUser)
+			r.Delete("/users/{id}", s.adminHandler.DeleteUser)
+			r.Get("/stats", s.adminHandler.GetStats)
+			r.Get("/jobs", s.adminHandler.ListJobs)
+			r.Post("/reindex-commits", s.adminHandler.ReindexCommits)
+		})
 	})
 
 	// WebSocket endpoint (authenticated via session cookie or bearer token)
@@ -663,17 +677,6 @@ func (s *Server) spaHandler() http.HandlerFunc {
 
 		http.ServeFile(w, r, indexPath)
 	}
-}
-
-func (s *Server) handleIndexAllCommits(w http.ResponseWriter, r *http.Request) {
-	go func() {
-		if err := s.commitIndexer.IndexAll(context.Background()); err != nil {
-			slog.Error("commit backfill failed", "error", err)
-		}
-	}()
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	fmt.Fprintf(w, `{"data":{"status":"indexing started"}}`)
 }
 
 func handleNotImplemented(w http.ResponseWriter, r *http.Request) {
