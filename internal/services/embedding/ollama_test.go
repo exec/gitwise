@@ -5,14 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 )
 
 func TestOllamaProvider_Embed(t *testing.T) {
-	// Set up a fake Ollama server
-	callCount := 0
+	var callCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/embeddings" {
+		if r.URL.Path != "/api/embed" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			http.Error(w, "not found", http.StatusNotFound)
 			return
@@ -26,7 +26,7 @@ func TestOllamaProvider_Embed(t *testing.T) {
 			t.Errorf("unexpected content-type: %s", ct)
 		}
 
-		var req ollamaRequest
+		var req ollamaEmbedRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
@@ -36,10 +36,12 @@ func TestOllamaProvider_Embed(t *testing.T) {
 			t.Errorf("unexpected model: %s", req.Model)
 		}
 
-		callCount++
-		resp := ollamaResponse{
-			Embedding: []float32{0.1, 0.2, 0.3},
+		callCount.Add(1)
+		embeddings := make([][]float32, len(req.Input))
+		for i := range req.Input {
+			embeddings[i] = []float32{0.1, 0.2, 0.3}
 		}
+		resp := ollamaEmbedResponse{Embeddings: embeddings}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -48,7 +50,7 @@ func TestOllamaProvider_Embed(t *testing.T) {
 	p := NewOllamaProvider(server.URL, "nomic-embed-text", 3)
 
 	t.Run("single text", func(t *testing.T) {
-		callCount = 0
+		callCount.Store(0)
 		embeddings, err := p.Embed(context.Background(), []string{"hello world"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -59,13 +61,13 @@ func TestOllamaProvider_Embed(t *testing.T) {
 		if len(embeddings[0]) != 3 {
 			t.Errorf("expected 3 dimensions, got %d", len(embeddings[0]))
 		}
-		if callCount != 1 {
-			t.Errorf("expected 1 API call, got %d", callCount)
+		if callCount.Load() != 1 {
+			t.Errorf("expected 1 API call, got %d", callCount.Load())
 		}
 	})
 
-	t.Run("multiple texts", func(t *testing.T) {
-		callCount = 0
+	t.Run("batch texts", func(t *testing.T) {
+		callCount.Store(0)
 		embeddings, err := p.Embed(context.Background(), []string{"hello", "world", "test"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -73,13 +75,13 @@ func TestOllamaProvider_Embed(t *testing.T) {
 		if len(embeddings) != 3 {
 			t.Fatalf("expected 3 embeddings, got %d", len(embeddings))
 		}
-		if callCount != 3 {
-			t.Errorf("expected 3 API calls, got %d", callCount)
+		if callCount.Load() != 1 {
+			t.Errorf("expected 1 API call (batch), got %d", callCount.Load())
 		}
 	})
 
 	t.Run("empty input", func(t *testing.T) {
-		callCount = 0
+		callCount.Store(0)
 		embeddings, err := p.Embed(context.Background(), []string{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -87,8 +89,8 @@ func TestOllamaProvider_Embed(t *testing.T) {
 		if embeddings != nil {
 			t.Errorf("expected nil, got %v", embeddings)
 		}
-		if callCount != 0 {
-			t.Errorf("expected 0 API calls, got %d", callCount)
+		if callCount.Load() != 0 {
+			t.Errorf("expected 0 API calls, got %d", callCount.Load())
 		}
 	})
 }
@@ -109,7 +111,7 @@ func TestOllamaProvider_EmbedError(t *testing.T) {
 
 	t.Run("ollama error response", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			resp := ollamaResponse{Error: "model not found"}
+			resp := ollamaEmbedResponse{Error: "model not found"}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(resp)
 		}))
@@ -130,18 +132,18 @@ func TestOllamaProvider_EmbedError(t *testing.T) {
 		}
 	})
 
-	t.Run("empty embedding", func(t *testing.T) {
+	t.Run("count mismatch", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			resp := ollamaResponse{Embedding: []float32{}}
+			resp := ollamaEmbedResponse{Embeddings: [][]float32{{0.1}}}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(resp)
 		}))
 		defer server.Close()
 
 		p := NewOllamaProvider(server.URL, "nomic-embed-text", 768)
-		_, err := p.Embed(context.Background(), []string{"test"})
+		_, err := p.Embed(context.Background(), []string{"a", "b"})
 		if err == nil {
-			t.Fatal("expected error for empty embedding, got nil")
+			t.Fatal("expected error for count mismatch, got nil")
 		}
 	})
 }

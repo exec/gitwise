@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
 // OllamaProvider generates embeddings via a local Ollama instance.
@@ -26,21 +27,21 @@ func NewOllamaProvider(baseURL, model string, dimensions int) *OllamaProvider {
 		baseURL:    baseURL,
 		model:      model,
 		dimensions: dimensions,
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
 func (p *OllamaProvider) Dimensions() int  { return p.dimensions }
 func (p *OllamaProvider) ModelName() string { return p.model }
 
-type ollamaRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
+type ollamaEmbedRequest struct {
+	Model string   `json:"model"`
+	Input []string `json:"input"`
 }
 
-type ollamaResponse struct {
-	Embedding []float32 `json:"embedding"`
-	Error     string    `json:"error,omitempty"`
+type ollamaEmbedResponse struct {
+	Embeddings [][]float32 `json:"embeddings"`
+	Error      string      `json:"error,omitempty"`
 }
 
 func (p *OllamaProvider) Embed(ctx context.Context, texts []string) ([][]float32, error) {
@@ -48,30 +49,15 @@ func (p *OllamaProvider) Embed(ctx context.Context, texts []string) ([][]float32
 		return nil, nil
 	}
 
-	// Ollama's /api/embeddings endpoint handles one text at a time,
-	// so we loop over the inputs.
-	embeddings := make([][]float32, len(texts))
-	for i, text := range texts {
-		vec, err := p.embedSingle(ctx, text)
-		if err != nil {
-			return nil, fmt.Errorf("embed text [%d]: %w", i, err)
-		}
-		embeddings[i] = vec
-	}
-
-	return embeddings, nil
-}
-
-func (p *OllamaProvider) embedSingle(ctx context.Context, text string) ([]float32, error) {
-	body, err := json.Marshal(ollamaRequest{
-		Model:  p.model,
-		Prompt: text,
+	body, err := json.Marshal(ollamaEmbedRequest{
+		Model: p.model,
+		Input: texts,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	url := p.baseURL + "/api/embeddings"
+	url := p.baseURL + "/api/embed"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -93,7 +79,7 @@ func (p *OllamaProvider) embedSingle(ctx context.Context, text string) ([]float3
 		return nil, fmt.Errorf("ollama API error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
-	var result ollamaResponse
+	var result ollamaEmbedResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
@@ -102,9 +88,9 @@ func (p *OllamaProvider) embedSingle(ctx context.Context, text string) ([]float3
 		return nil, fmt.Errorf("ollama error: %s", result.Error)
 	}
 
-	if len(result.Embedding) == 0 {
-		return nil, fmt.Errorf("ollama returned empty embedding")
+	if len(result.Embeddings) != len(texts) {
+		return nil, fmt.Errorf("ollama returned %d embeddings for %d inputs", len(result.Embeddings), len(texts))
 	}
 
-	return result.Embedding, nil
+	return result.Embeddings, nil
 }
