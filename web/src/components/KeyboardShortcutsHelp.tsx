@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 interface KeyboardShortcutsHelpProps {
   isOpen: boolean;
@@ -7,6 +7,7 @@ interface KeyboardShortcutsHelpProps {
 
 interface ShortcutEntry {
   keys: string[];
+  separator?: "then" | "or";
   description: string;
 }
 
@@ -19,7 +20,9 @@ const shortcutGroups: ShortcutGroup[] = [
   {
     title: "Site-wide shortcuts",
     shortcuts: [
-      { keys: ["/", "s"], description: "Focus search bar" },
+      { keys: ["/"], description: "Focus search bar" },
+      { keys: ["s"], description: "Focus search bar" },
+      { keys: ["Ctrl", "K"], separator: "then", description: "Focus search bar" },
       { keys: ["?"], description: "Show keyboard shortcuts" },
       { keys: ["Esc"], description: "Close dialog / cancel" },
     ],
@@ -27,10 +30,10 @@ const shortcutGroups: ShortcutGroup[] = [
   {
     title: "Repository navigation",
     shortcuts: [
-      { keys: ["g", "c"], description: "Go to Code" },
-      { keys: ["g", "i"], description: "Go to Issues" },
-      { keys: ["g", "p"], description: "Go to Pull Requests" },
-      { keys: ["g", "n"], description: "Go to Dashboard" },
+      { keys: ["g", "c"], separator: "then", description: "Go to Code" },
+      { keys: ["g", "i"], separator: "then", description: "Go to Issues" },
+      { keys: ["g", "p"], separator: "then", description: "Go to Pull Requests" },
+      { keys: ["g", "n"], separator: "then", description: "Go to Dashboard" },
     ],
   },
 ];
@@ -41,6 +44,16 @@ function Key({ children }: { children: string }) {
 
 export default function KeyboardShortcutsHelp({ isOpen, onClose }: KeyboardShortcutsHelpProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  const stableClose = useCallback(() => onClose(), [onClose]);
+
+  // Focus close button on open
+  useEffect(() => {
+    if (isOpen) {
+      closeRef.current?.focus();
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -49,36 +62,51 @@ export default function KeyboardShortcutsHelp({ isOpen, onClose }: KeyboardShort
       if (e.key === "Escape" || e.key === "?") {
         e.preventDefault();
         e.stopPropagation();
-        onClose();
+        stableClose();
+      }
+      // Trap Tab within dialog
+      if (e.key === "Tab" && dialogRef.current) {
+        const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     }
 
-    // Use capture phase so we intercept before the main shortcut handler
     document.addEventListener("keydown", handleKeyDown, true);
     return () => document.removeEventListener("keydown", handleKeyDown, true);
-  }, [isOpen, onClose]);
+  }, [isOpen, stableClose]);
 
   useEffect(() => {
     if (!isOpen) return;
 
     function handleClick(e: MouseEvent) {
       if (dialogRef.current && !dialogRef.current.contains(e.target as Node)) {
-        onClose();
+        stableClose();
       }
     }
 
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [isOpen, onClose]);
+  }, [isOpen, stableClose]);
 
   if (!isOpen) return null;
 
   return (
-    <div className="shortcuts-overlay">
+    <div className="shortcuts-overlay" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
       <div className="shortcuts-dialog" ref={dialogRef}>
         <div className="shortcuts-header">
-          <h2>Keyboard shortcuts</h2>
-          <button className="shortcuts-close" onClick={onClose} aria-label="Close">
+          <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+          <button className="shortcuts-close" onClick={onClose} aria-label="Close" ref={closeRef}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
               <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
             </svg>
@@ -90,11 +118,15 @@ export default function KeyboardShortcutsHelp({ isOpen, onClose }: KeyboardShort
               <h3 className="shortcuts-group-title">{group.title}</h3>
               <ul className="shortcuts-list">
                 {group.shortcuts.map((shortcut) => (
-                  <li className="shortcuts-row" key={shortcut.description}>
+                  <li className="shortcuts-row" key={shortcut.keys.join("+") + shortcut.description}>
                     <span className="shortcuts-keys">
                       {shortcut.keys.map((k, i) => (
                         <span key={i}>
-                          {i > 0 && <span className="shortcuts-then">then</span>}
+                          {i > 0 && (
+                            <span className="shortcuts-then">
+                              {shortcut.separator === "then" ? "then" : "+"}
+                            </span>
+                          )}
                           <Key>{k}</Key>
                         </span>
                       ))}

@@ -29,6 +29,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     searchInputRef.current?.focus();
   }, []);
 
+  const handleCloseShortcuts = useCallback(() => {
+    setShortcutsOpen(false);
+  }, []);
+
   useKeyboardShortcuts({
     onToggleHelp: handleToggleHelp,
     onFocusSearch: handleFocusSearch,
@@ -154,7 +158,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <main className="main-content">{children}</main>
       <KeyboardShortcutsHelp
         isOpen={shortcutsOpen}
-        onClose={() => setShortcutsOpen(false)}
+        onClose={handleCloseShortcuts}
       />
     </div>
   );
