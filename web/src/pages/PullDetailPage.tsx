@@ -613,8 +613,11 @@ export default function PullDetailPage() {
                   onAddInlineComment={user && pr.status === "open" ? (path, line, side, body) => {
                     setPendingInlineComments(prev => [...prev, { path, line, side, body }]);
                   } : undefined}
+                  onRemoveInlineComment={user && pr.status === "open" ? (pendingIndex) => {
+                    setPendingInlineComments(prev => prev.filter((_, i) => i !== pendingIndex));
+                  } : undefined}
                   inlineComments={[
-                    ...pendingInlineComments.map(c => ({ ...c, author_name: user?.username ? `${user.username} (pending)` : "(pending)" })),
+                    ...pendingInlineComments.map((c, i) => ({ ...c, author_name: user?.username ? `${user.username} (pending)` : "(pending)", pendingIndex: i })),
                     ...getExistingInlineComments(reviewsQuery.data),
                   ]}
                 />

@@ -505,6 +505,11 @@ func (s *Server) EmbeddingService() *embedding.Service {
 	return s.embeddingSvc
 }
 
+// WebhookService returns the webhook service for use by the retry worker.
+func (s *Server) WebhookService() *webhook.Service {
+	return s.webhookSvc
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

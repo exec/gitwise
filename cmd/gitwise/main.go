@@ -62,6 +62,9 @@ func main() {
 	embWorker := workers.NewEmbeddingWorker(srv.EmbeddingService(), cfg.Embedding.WorkerInterval)
 	embWorker.Start()
 
+	// Webhook retry loop
+	srv.WebhookService().StartRetryLoop()
+
 	// Graceful shutdown
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
@@ -77,6 +80,7 @@ func main() {
 	slog.Info("shutting down", "signal", sig)
 
 	embWorker.Stop()
+	srv.WebhookService().StopRetryLoop()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
