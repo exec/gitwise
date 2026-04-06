@@ -29,7 +29,191 @@ func NewService(db *pgxpool.Pool, hub ...*websocket.Hub) *Service {
 	return s
 }
 
+// IsTypeEnabled checks whether the given notification type is enabled for a user.
+// If the user has no preferences row, all types default to enabled.
+func (s *Service) IsTypeEnabled(ctx context.Context, userID uuid.UUID, notifType string) (bool, error) {
+	prefs, err := s.GetPreferences(ctx, userID)
+	if err != nil {
+		return false, fmt.Errorf("check notification preference: %w", err)
+	}
+
+	switch notifType {
+	case "pr_review":
+		return prefs.PRReview, nil
+	case "pr_merged":
+		return prefs.PRMerged, nil
+	case "pr_comment":
+		return prefs.PRComment, nil
+	case "issue_comment":
+		return prefs.IssueComment, nil
+	case "mention":
+		return prefs.Mention, nil
+	default:
+		// Unknown types are always enabled
+		return true, nil
+	}
+}
+
+// GetPreferences returns notification preferences for a user.
+// If no row exists, returns defaults (all enabled).
+func (s *Service) GetPreferences(ctx context.Context, userID uuid.UUID) (*models.NotificationPreferences, error) {
+	prefs := &models.NotificationPreferences{UserID: userID}
+	err := s.db.QueryRow(ctx, `
+		SELECT pr_review, pr_merged, pr_comment, issue_comment, mention, updated_at
+		FROM notification_preferences
+		WHERE user_id = $1`,
+		userID,
+	).Scan(&prefs.PRReview, &prefs.PRMerged, &prefs.PRComment, &prefs.IssueComment, &prefs.Mention, &prefs.UpdatedAt)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Return defaults — all enabled
+		prefs.PRReview = true
+		prefs.PRMerged = true
+		prefs.PRComment = true
+		prefs.IssueComment = true
+		prefs.Mention = true
+		return prefs, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query notification preferences: %w", err)
+	}
+	return prefs, nil
+}
+
+// UpdatePreferences upserts notification preferences for a user.
+func (s *Service) UpdatePreferences(ctx context.Context, userID uuid.UUID, req *models.UpdateNotificationPreferencesRequest) (*models.NotificationPreferences, error) {
+	// Get current preferences (or defaults)
+	prefs, err := s.GetPreferences(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply partial updates
+	if req.PRReview != nil {
+		prefs.PRReview = *req.PRReview
+	}
+	if req.PRMerged != nil {
+		prefs.PRMerged = *req.PRMerged
+	}
+	if req.PRComment != nil {
+		prefs.PRComment = *req.PRComment
+	}
+	if req.IssueComment != nil {
+		prefs.IssueComment = *req.IssueComment
+	}
+	if req.Mention != nil {
+		prefs.Mention = *req.Mention
+	}
+
+	err = s.db.QueryRow(ctx, `
+		INSERT INTO notification_preferences (user_id, pr_review, pr_merged, pr_comment, issue_comment, mention, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, now())
+		ON CONFLICT (user_id) DO UPDATE SET
+			pr_review = EXCLUDED.pr_review,
+			pr_merged = EXCLUDED.pr_merged,
+			pr_comment = EXCLUDED.pr_comment,
+			issue_comment = EXCLUDED.issue_comment,
+			mention = EXCLUDED.mention,
+			updated_at = now()
+		RETURNING updated_at`,
+		userID, prefs.PRReview, prefs.PRMerged, prefs.PRComment, prefs.IssueComment, prefs.Mention,
+	).Scan(&prefs.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("upsert notification preferences: %w", err)
+	}
+
+	return prefs, nil
+}
+
+// WatchRepo adds a user as a watcher of a repository.
+func (s *Service) WatchRepo(ctx context.Context, userID, repoID uuid.UUID) error {
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO repo_watchers (user_id, repo_id)
+		VALUES ($1, $2)
+		ON CONFLICT (user_id, repo_id) DO NOTHING`,
+		userID, repoID,
+	)
+	if err != nil {
+		return fmt.Errorf("watch repo: %w", err)
+	}
+	return nil
+}
+
+// UnwatchRepo removes a user as a watcher of a repository.
+func (s *Service) UnwatchRepo(ctx context.Context, userID, repoID uuid.UUID) error {
+	_, err := s.db.Exec(ctx, `
+		DELETE FROM repo_watchers
+		WHERE user_id = $1 AND repo_id = $2`,
+		userID, repoID,
+	)
+	if err != nil {
+		return fmt.Errorf("unwatch repo: %w", err)
+	}
+	return nil
+}
+
+// IsWatching checks if a user is watching a repository.
+func (s *Service) IsWatching(ctx context.Context, userID, repoID uuid.UUID) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM repo_watchers WHERE user_id = $1 AND repo_id = $2)`,
+		userID, repoID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check watching: %w", err)
+	}
+	return exists, nil
+}
+
+// ListRepoWatchers returns all user IDs watching a given repository.
+func (s *Service) ListRepoWatchers(ctx context.Context, repoID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT user_id FROM repo_watchers WHERE repo_id = $1`,
+		repoID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query repo watchers: %w", err)
+	}
+	defer rows.Close()
+
+	var userIDs []uuid.UUID
+	for rows.Next() {
+		var uid uuid.UUID
+		if err := rows.Scan(&uid); err != nil {
+			return nil, fmt.Errorf("scan watcher: %w", err)
+		}
+		userIDs = append(userIDs, uid)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate watchers: %w", err)
+	}
+	return userIDs, nil
+}
+
+// WatcherCount returns the number of watchers for a repository.
+func (s *Service) WatcherCount(ctx context.Context, repoID uuid.UUID) (int, error) {
+	var count int
+	err := s.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM repo_watchers WHERE repo_id = $1`,
+		repoID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count watchers: %w", err)
+	}
+	return count, nil
+}
+
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, notifType, title, body, link string) (*models.Notification, error) {
+	// Check if user has this notification type enabled
+	enabled, err := s.IsTypeEnabled(ctx, userID, notifType)
+	if err != nil {
+		return nil, fmt.Errorf("check notification preference: %w", err)
+	}
+	if !enabled {
+		// User has disabled this notification type — skip silently
+		return nil, nil
+	}
+
 	n := &models.Notification{
 		ID:       uuid.New(),
 		UserID:   userID,
@@ -41,7 +225,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, notifType, title
 		Metadata: json.RawMessage(`{}`),
 	}
 
-	err := s.db.QueryRow(ctx, `
+	err = s.db.QueryRow(ctx, `
 		INSERT INTO notifications (id, user_id, type, title, body, link, is_read, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING created_at`,

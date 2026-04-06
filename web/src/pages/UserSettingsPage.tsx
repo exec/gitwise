@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { get, post, del } from "../lib/api";
+import { get, post, put, del } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
 
 interface ApiToken {
@@ -27,6 +27,16 @@ interface SSHKey {
   created_at: string;
 }
 
+interface NotificationPreferences {
+  user_id: string;
+  pr_review: boolean;
+  pr_merged: boolean;
+  pr_comment: boolean;
+  issue_comment: boolean;
+  mention: boolean;
+  updated_at: string;
+}
+
 const AVAILABLE_SCOPES = [
   { value: "repo:read", label: "repo:read" },
   { value: "repo:write", label: "repo:write" },
@@ -45,7 +55,7 @@ function formatDate(dateStr: string | null): string {
 }
 
 export default function UserSettingsPage() {
-  const [activeTab, setActiveTab] = useState<"tokens" | "ssh-keys" | "account">("tokens");
+  const [activeTab, setActiveTab] = useState<"tokens" | "ssh-keys" | "notifications" | "account">("tokens");
   const navigate = useNavigate();
 
   return (
@@ -70,6 +80,12 @@ export default function UserSettingsPage() {
           SSH Keys
         </button>
         <button
+          className={`settings-tab ${activeTab === "notifications" ? "active" : ""}`}
+          onClick={() => setActiveTab("notifications")}
+        >
+          Notifications
+        </button>
+        <button
           className={`settings-tab ${activeTab === "account" ? "active" : ""}`}
           onClick={() => setActiveTab("account")}
         >
@@ -80,6 +96,7 @@ export default function UserSettingsPage() {
       <div className="settings-content">
         {activeTab === "tokens" && <TokensTab />}
         {activeTab === "ssh-keys" && <SSHKeysTab />}
+        {activeTab === "notifications" && <NotificationsTab />}
         {activeTab === "account" && <AccountTab />}
       </div>
     </div>
@@ -475,6 +492,105 @@ function SSHKeysTab() {
           <p className="muted" style={{ margin: 0 }}>No SSH keys yet. Add one to push and pull via SSH.</p>
         </div>
       )}
+    </div>
+  );
+}
+
+const NOTIFICATION_TYPES = [
+  { key: "pr_review" as const, label: "Pull request reviews", description: "When someone reviews your pull request" },
+  { key: "pr_merged" as const, label: "Pull request merged", description: "When a pull request you're involved in is merged" },
+  { key: "pr_comment" as const, label: "Pull request comments", description: "When someone comments on your pull request" },
+  { key: "issue_comment" as const, label: "Issue comments", description: "When someone comments on an issue you're involved in" },
+  { key: "mention" as const, label: "Mentions", description: "When someone mentions you in a comment or description" },
+];
+
+function NotificationsTab() {
+  const queryClient = useQueryClient();
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+
+  const { data: prefs, isLoading } = useQuery({
+    queryKey: ["notification-preferences"],
+    queryFn: async () => {
+      const { data } = await get<NotificationPreferences>("/user/notification-preferences");
+      return data;
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async (update: Partial<Record<string, boolean>>) => {
+      const { data } = await put<NotificationPreferences>("/user/notification-preferences", update);
+      return data;
+    },
+    onMutate: async (update) => {
+      await queryClient.cancelQueries({ queryKey: ["notification-preferences"] });
+      const previous = queryClient.getQueryData<NotificationPreferences>(["notification-preferences"]);
+      if (previous) {
+        queryClient.setQueryData<NotificationPreferences>(["notification-preferences"], {
+          ...previous,
+          ...update,
+        });
+      }
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["notification-preferences"], context.previous);
+      }
+    },
+    onSuccess: () => {
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus("idle"), 2000);
+      queryClient.invalidateQueries({ queryKey: ["notification-preferences"] });
+    },
+  });
+
+  const handleToggle = (key: string, currentValue: boolean) => {
+    setSaveStatus("saving");
+    updateMutation.mutate({ [key]: !currentValue });
+  };
+
+  if (isLoading) {
+    return (
+      <div>
+        <h2>Notifications</h2>
+        <p className="muted">Loading preferences...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="settings-header">
+        <h2>Notifications</h2>
+        {saveStatus === "saving" && <span className="muted">Saving...</span>}
+        {saveStatus === "saved" && <span style={{ color: "var(--success)" }}>Saved</span>}
+      </div>
+      <p className="muted" style={{ marginBottom: 16 }}>
+        Choose which notifications you'd like to receive.
+      </p>
+
+      <div className="settings-form-card">
+        {NOTIFICATION_TYPES.map((type) => {
+          const value = prefs ? prefs[type.key] : true;
+          return (
+            <div key={type.key} className="notification-pref-row">
+              <div className="notification-pref-info">
+                <strong>{type.label}</strong>
+                <span className="muted">{type.description}</span>
+              </div>
+              <button
+                className={`toggle-switch ${value ? "active" : ""}`}
+                onClick={() => handleToggle(type.key, value)}
+                role="switch"
+                aria-checked={value}
+                aria-label={type.label}
+              >
+                <span className="toggle-knob" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
