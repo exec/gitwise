@@ -52,6 +52,11 @@ func (h *TwoFactorHandler) Setup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if u.Password == "" {
+		writeError(w, http.StatusBadRequest, "no_password", "set a password before enabling 2FA (OAuth-only accounts must add a password first)")
+		return
+	}
+
 	result, err := h.totp.BeginSetup(r.Context(), *userID, u.Username, "Gitwise", u.Password, req.CurrentPassword)
 	if errors.Is(err, totp.ErrBadPassword) {
 		writeError(w, http.StatusForbidden, "bad_password", "incorrect password")

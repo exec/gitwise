@@ -285,40 +285,28 @@ func (s *Service) ValidatePendingAuth(ctx context.Context, token string) (uuid.U
 	return userID, nil
 }
 
-// IncrementAttempts bumps the attempt counter on a pending token.
-// Called when TOTP verification fails.
+// incrAttemptsScript atomically increments the attempt counter and deletes
+// the key if the limit is reached, avoiding read-modify-write races.
+var incrAttemptsScript = redis.NewScript(`
+	local val = redis.call("GET", KEYS[1])
+	if not val then return -1 end
+	local pa = cjson.decode(val)
+	pa.attempts = (pa.attempts or 0) + 1
+	if pa.attempts >= tonumber(ARGV[1]) then
+		redis.call("DEL", KEYS[1])
+		return pa.attempts
+	end
+	local ttl = redis.call("TTL", KEYS[1])
+	if ttl <= 0 then ttl = tonumber(ARGV[2]) end
+	redis.call("SET", KEYS[1], cjson.encode(pa), "EX", ttl)
+	return pa.attempts
+`)
+
+// IncrementAttempts atomically bumps the attempt counter on a pending token.
+// Deletes the token after maxAttempts failed attempts.
 func (s *Service) IncrementAttempts(ctx context.Context, token string) {
 	key := pendingAuthPrefix + token
-
-	val, err := s.rdb.Get(ctx, key).Result()
-	if err != nil {
-		return
-	}
-
-	var pa pendingAuth
-	if err := json.Unmarshal([]byte(val), &pa); err != nil {
-		return
-	}
-
-	pa.Attempts++
-
-	if pa.Attempts >= maxAttempts {
-		// C4: Delete token after max attempts.
-		s.rdb.Del(ctx, key)
-		return
-	}
-
-	data, err := json.Marshal(pa)
-	if err != nil {
-		return
-	}
-
-	// Preserve remaining TTL.
-	ttl, err := s.rdb.TTL(ctx, key).Result()
-	if err != nil || ttl <= 0 {
-		ttl = pendingAuthExpiry
-	}
-	s.rdb.Set(ctx, key, string(data), ttl)
+	incrAttemptsScript.Run(ctx, s.rdb, []string{key}, maxAttempts, int(pendingAuthExpiry.Seconds()))
 }
 
 // ConsumePendingAuth deletes the pending token after successful verification.
