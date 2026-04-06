@@ -302,6 +302,17 @@ func (h *OrgHandler) ListUserOrgs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, orgs)
 }
 
+// ListPublicUserOrgs handles GET /api/v1/users/{username}/orgs.
+func (h *OrgHandler) ListPublicUserOrgs(w http.ResponseWriter, r *http.Request) {
+	username := chi.URLParam(r, "username")
+	orgs, err := h.orgSvc.ListPublicUserOrgs(r.Context(), username)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "failed to list organizations")
+		return
+	}
+	writeJSON(w, http.StatusOK, orgs)
+}
+
 // Resolve handles GET /api/v1/resolve/{name}. Returns {type, data} for user or org.
 func (h *OrgHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")

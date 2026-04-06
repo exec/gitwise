@@ -445,6 +445,35 @@ func (s *Service) ListUserOrgs(ctx context.Context, userID uuid.UUID) ([]models.
 	return orgs, nil
 }
 
+// ListPublicUserOrgs returns organizations a user belongs to (public info, no role).
+// Used for displaying orgs on a user's public profile page.
+func (s *Service) ListPublicUserOrgs(ctx context.Context, username string) ([]models.OrgMembership, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT o.id, o.name, o.display_name, o.avatar_url, om.role
+		FROM org_members om
+		JOIN organizations o ON o.id = om.org_id
+		JOIN users u ON u.id = om.user_id
+		WHERE u.username = $1
+		ORDER BY o.name ASC`, username)
+	if err != nil {
+		return nil, fmt.Errorf("list public user orgs: %w", err)
+	}
+	defer rows.Close()
+
+	var orgs []models.OrgMembership
+	for rows.Next() {
+		var m models.OrgMembership
+		if err := rows.Scan(&m.ID, &m.Name, &m.DisplayName, &m.AvatarURL, &m.Role); err != nil {
+			return nil, fmt.Errorf("scan public user org: %w", err)
+		}
+		orgs = append(orgs, m)
+	}
+	if orgs == nil {
+		orgs = []models.OrgMembership{}
+	}
+	return orgs, nil
+}
+
 // NameExists returns true if an organization with the given name exists.
 func (s *Service) NameExists(ctx context.Context, name string) (bool, error) {
 	var exists bool

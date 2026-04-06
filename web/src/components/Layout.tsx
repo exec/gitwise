@@ -1,11 +1,20 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { get } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
 import { useThemeStore } from "../stores/theme";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import NotificationBell from "./NotificationBell";
 import KeyboardShortcutsHelp from "./KeyboardShortcutsHelp";
+
+interface OrgMembership {
+  id: string;
+  name: string;
+  display_name: string;
+  avatar_url: string;
+  role: string;
+}
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user);
@@ -36,6 +45,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   useKeyboardShortcuts({
     onToggleHelp: handleToggleHelp,
     onFocusSearch: handleFocusSearch,
+  });
+
+  const orgsQuery = useQuery({
+    queryKey: ["my-orgs"],
+    queryFn: () => get<OrgMembership[]>("/user/orgs").then((r) => r.data),
+    enabled: isAuthenticated,
   });
 
   useEffect(() => {
@@ -142,6 +157,22 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     <Link to="/new/org" className="user-dropdown-item" onClick={() => setDropdownOpen(false)}>
                       New organization
                     </Link>
+                    {orgsQuery.data && orgsQuery.data.length > 0 && (
+                      <>
+                        <div className="user-dropdown-divider" />
+                        <div className="user-dropdown-label">Your organizations</div>
+                        {orgsQuery.data.map((org) => (
+                          <Link
+                            key={org.id}
+                            to={`/${org.name}`}
+                            className="user-dropdown-item"
+                            onClick={() => setDropdownOpen(false)}
+                          >
+                            {org.display_name || org.name}
+                          </Link>
+                        ))}
+                      </>
+                    )}
                     {user.is_admin && (
                       <Link to="/admin-8bc6d1f" className="user-dropdown-item" onClick={() => setDropdownOpen(false)}>
                         Admin

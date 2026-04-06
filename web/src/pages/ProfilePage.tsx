@@ -40,6 +40,14 @@ interface Repo {
   updated_at: string;
 }
 
+interface OrgMembership {
+  id: string;
+  name: string;
+  display_name: string;
+  avatar_url: string;
+  role: string;
+}
+
 export default function ProfilePage() {
   const params = useParams();
   const username = params.username || params.owner;
@@ -73,6 +81,13 @@ export default function ProfilePage() {
     queryKey: ["user-repos", username],
     queryFn: () =>
       get<Repo[]>(`/users/${username}/repos`).then((r) => r.data),
+    enabled: !!username,
+  });
+
+  const orgsQuery = useQuery({
+    queryKey: ["user-orgs", username],
+    queryFn: () =>
+      get<OrgMembership[]>(`/users/${username}/orgs`).then((r) => r.data),
     enabled: !!username,
   });
 
@@ -125,6 +140,30 @@ export default function ProfilePage() {
             </Link>
           )}
         </div>
+
+        {/* Organizations */}
+        {orgsQuery.data && orgsQuery.data.length > 0 && (
+          <div className="profile-orgs">
+            <h3 className="profile-orgs-title">Organizations</h3>
+            <div className="profile-orgs-list">
+              {orgsQuery.data.map((org) => (
+                <Link key={org.id} to={`/${org.name}`} className="profile-org-badge" title={org.display_name || org.name}>
+                  {org.avatar_url ? (
+                    <img
+                      src={avatarUrl(org.avatar_url, 64)}
+                      alt={org.name}
+                      className="profile-org-avatar"
+                    />
+                  ) : (
+                    <div className="profile-org-avatar profile-org-avatar-placeholder">
+                      {(org.display_name || org.name).charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
       </aside>
 
       <div className="profile-main">

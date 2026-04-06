@@ -452,6 +452,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/users/{username}/contributions", s.profileHandler.GetContributions)
 		r.Get("/users/{username}/pinned-repos", s.profileHandler.ListPinnedRepos)
 		r.Get("/users/{username}/activity", s.activityHandler.ListByUser)
+		r.Get("/users/{username}/orgs", s.orgHandler.ListPublicUserOrgs)
 
 		// Authenticated profile actions
 		r.With(middleware.RequireAuth).Patch("/user/profile", s.profileHandler.UpdateProfile)
