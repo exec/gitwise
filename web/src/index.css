@@ -25,18 +25,54 @@
   --hl-function: #d2a8ff;
   --hl-operator: #ff7b72;
   --hl-type: #ffa657;
+  --btn-primary-bg: #238636;
+  --btn-primary-hover: #2ea043;
+  --btn-primary-border: rgba(240, 246, 252, 0.1);
+  --tab-active-border: #f78166;
+  --shadow-overlay: rgba(0, 0, 0, 0.4);
+  --shadow-modal: rgba(0, 0, 0, 0.6);
+  --warning: #d29922;
+  --purple: #a371f7;
+  --contrib-empty: #161b22;
+  --contrib-low: #0e4429;
+  --contrib-med: #006d32;
+  --contrib-high: #26a641;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --hl-keyword: #cf222e;
-    --hl-string: #0a3069;
-    --hl-comment: #6e7781;
-    --hl-number: #0550ae;
-    --hl-function: #8250df;
-    --hl-operator: #cf222e;
-    --hl-type: #953800;
-  }
+/* Light theme overrides */
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f6f8fa;
+  --bg-tertiary: #eaeef2;
+  --border: #d0d7de;
+  --text-primary: #1f2328;
+  --text-secondary: #656d76;
+  --text-muted: #8b949e;
+  --accent: #0969da;
+  --accent-hover: #0550ae;
+  --danger: #cf222e;
+  --success: #1a7f37;
+  --badge-public: #1a7f37;
+  --badge-private: #656d76;
+  --hl-keyword: #cf222e;
+  --hl-string: #0a3069;
+  --hl-comment: #6e7781;
+  --hl-number: #0550ae;
+  --hl-function: #8250df;
+  --hl-operator: #cf222e;
+  --hl-type: #953800;
+  --btn-primary-bg: #1a7f37;
+  --btn-primary-hover: #218739;
+  --btn-primary-border: rgba(31, 35, 40, 0.15);
+  --tab-active-border: #d15f34;
+  --shadow-overlay: rgba(0, 0, 0, 0.2);
+  --shadow-modal: rgba(0, 0, 0, 0.3);
+  --warning: #9a6700;
+  --purple: #8250df;
+  --contrib-empty: #ebedf0;
+  --contrib-low: #9be9a8;
+  --contrib-med: #40c463;
+  --contrib-high: #30a14e;
 }
 
 *,
@@ -168,13 +204,13 @@ a:hover {
 }
 
 .btn-primary {
-  background: #238636;
+  background: var(--btn-primary-bg);
   color: #fff;
-  border-color: rgba(240, 246, 252, 0.1);
+  border-color: var(--btn-primary-border);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #2ea043;
+  background: var(--btn-primary-hover);
   color: #fff;
 }
 
@@ -185,7 +221,7 @@ a:hover {
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #30363d;
+  background: var(--border);
   color: var(--text-primary);
 }
 
@@ -484,7 +520,7 @@ input:disabled {
 .tab-active {
   color: var(--text-primary);
   font-weight: 600;
-  border-bottom-color: #f78166;
+  border-bottom-color: var(--tab-active-border);
 }
 
 /* ---- Code toolbar ---- */
@@ -1052,7 +1088,7 @@ input:disabled {
 }
 
 .pr-status-dot.merged {
-  background: #a371f7;
+  background: var(--purple);
 }
 
 .pr-status-dot {
@@ -1093,10 +1129,10 @@ input:disabled {
   text-transform: uppercase;
 }
 
-.priority-critical { background: rgba(248, 81, 73, 0.2); color: #f85149; }
-.priority-high { background: rgba(210, 153, 34, 0.2); color: #d29922; }
-.priority-medium { background: rgba(88, 166, 255, 0.2); color: #58a6ff; }
-.priority-low { background: rgba(139, 148, 158, 0.2); color: #8b949e; }
+.priority-critical { background: rgba(248, 81, 73, 0.2); color: var(--danger); }
+.priority-high { background: rgba(210, 153, 34, 0.2); color: var(--warning); }
+.priority-medium { background: rgba(88, 166, 255, 0.2); color: var(--accent); }
+.priority-low { background: rgba(139, 148, 158, 0.2); color: var(--text-secondary); }
 
 /* ---- Issue/PR detail ---- */
 
@@ -1146,7 +1182,7 @@ input:disabled {
 
 .issue-status-badge.merged {
   background: rgba(163, 113, 247, 0.15);
-  color: #a371f7;
+  color: var(--purple);
 }
 
 .issue-meta-info {
@@ -1337,7 +1373,7 @@ input:disabled {
 
 .review-type-badge.changes_requested {
   background: rgba(210, 153, 34, 0.15);
-  color: #d29922;
+  color: var(--warning);
 }
 
 .review-type-badge.comment {
@@ -1350,7 +1386,7 @@ input:disabled {
 }
 
 .review-card.review-changes_requested {
-  border-color: #d29922;
+  border-color: var(--warning);
 }
 
 .review-status {
@@ -1369,7 +1405,7 @@ input:disabled {
 
 .review-status.changes-requested {
   background: rgba(210, 153, 34, 0.1);
-  color: #d29922;
+  color: var(--warning);
   border: 1px solid rgba(210, 153, 34, 0.3);
 }
 
@@ -1379,7 +1415,7 @@ input:disabled {
   background: rgba(163, 113, 247, 0.1);
   border: 1px solid rgba(163, 113, 247, 0.3);
   border-radius: var(--radius);
-  color: #a371f7;
+  color: var(--purple);
   font-size: 0.875rem;
   font-weight: 500;
 }
@@ -1396,13 +1432,13 @@ input:disabled {
 }
 
 .btn-success {
-  background: #238636;
+  background: var(--btn-primary-bg);
   color: #fff;
-  border-color: rgba(240, 246, 252, 0.1);
+  border-color: var(--btn-primary-border);
 }
 
 .btn-success:hover:not(:disabled) {
-  background: #2ea043;
+  background: var(--btn-primary-hover);
   color: #fff;
 }
 
@@ -1495,7 +1531,7 @@ input:disabled {
 
 .diff-status-added { background: rgba(63, 185, 80, 0.2); color: var(--success); }
 .diff-status-deleted { background: rgba(248, 81, 73, 0.2); color: var(--danger); }
-.diff-status-modified { background: rgba(210, 153, 34, 0.2); color: #d29922; }
+.diff-status-modified { background: rgba(210, 153, 34, 0.2); color: var(--warning); }
 .diff-status-renamed { background: rgba(88, 166, 255, 0.2); color: var(--accent); }
 
 .diff-file-path {
@@ -1969,12 +2005,7 @@ button.tab {
   z-index: 200;
 }
 
-:root {
-  --contrib-empty: #161b22;
-  --contrib-low: #0e4429;
-  --contrib-med: #006d32;
-  --contrib-high: #26a641;
-}
+/* Contribution graph colors now defined on the main :root and [data-theme="light"] */
 
 /* ---- Search bar (nav) ---- */
 
@@ -2263,7 +2294,7 @@ input.search-bar-input {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 24px var(--shadow-overlay);
   z-index: 1000;
 }
 
@@ -2489,7 +2520,7 @@ input.search-bar-input {
 
 .badge-role-owner {
   background: rgba(210, 153, 34, 0.15);
-  color: #d29922;
+  color: var(--warning);
 }
 
 .badge-role-member {
@@ -2669,7 +2700,7 @@ input.search-bar-input {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 4px 0;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 24px var(--shadow-overlay);
   z-index: 200;
 }
 
@@ -2778,7 +2809,7 @@ input.search-bar-input {
   background: rgba(210, 153, 34, 0.1);
   border: 1px solid rgba(210, 153, 34, 0.4);
   border-radius: var(--radius);
-  color: #d29922;
+  color: var(--warning);
   font-size: 0.875rem;
 }
 
@@ -2898,7 +2929,7 @@ a.settings-tab-link {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--shadow-modal);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3274,7 +3305,7 @@ a.settings-tab-link {
 .landing-logo {
   font-size: 3rem;
   font-weight: 800;
-  background: linear-gradient(135deg, var(--accent) 0%, #a855f7 100%);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--purple) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -3353,4 +3384,181 @@ a.settings-tab-link {
   .landing-logo {
     font-size: 2.25rem;
   }
+}
+
+/* ---- Theme toggle ---- */
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.theme-toggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+/* ---- File view toggle (Code / Blame) ---- */
+
+.file-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.file-view-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.file-view-btn {
+  padding: 4px 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+}
+
+.file-view-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.file-view-btn.active {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* ---- Blame view ---- */
+
+.blame-view-container {
+  overflow-x: auto;
+}
+
+.blame-view-table {
+  border-collapse: collapse;
+  width: 100%;
+  border-spacing: 0;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.blame-view-line:hover {
+  background: var(--bg-tertiary);
+}
+
+.blame-group-end {
+  border-bottom: 1px solid var(--border);
+}
+
+.blame-commit-cell {
+  position: sticky;
+  left: 0;
+  width: 240px;
+  min-width: 240px;
+  max-width: 240px;
+  padding: 0 10px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  vertical-align: top;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  overflow: hidden;
+}
+
+.blame-commit-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.blame-sha {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.blame-author {
+  color: var(--text-primary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.blame-date {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+}
+
+.blame-ln {
+  position: sticky;
+  left: 240px;
+  width: 1%;
+  min-width: 48px;
+  padding: 0 12px 0 16px;
+  text-align: right;
+  color: var(--text-muted);
+  user-select: none;
+  -webkit-user-select: none;
+  background: var(--bg-primary);
+  border-right: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+  vertical-align: top;
+}
+
+.blame-code {
+  padding: 0 16px;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+/* ---- Light theme specific adjustments ---- */
+
+[data-theme="light"] .btn-github {
+  background: #24292e;
+  color: #fff;
+}
+
+[data-theme="light"] .btn-github:hover {
+  background: #1a1e22;
+  color: #fff;
+}
+
+[data-theme="light"] .markdown-body code {
+  background: rgba(175, 184, 193, 0.2);
+}
+
+[data-theme="light"] input:focus,
+[data-theme="light"] select:focus,
+[data-theme="light"] textarea:focus {
+  box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.15);
+}
+
+[data-theme="light"] .search-bar-input:focus {
+  box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.15);
 }

@@ -836,6 +836,68 @@ func (s *Service) doRebaseMerge(r *gogit.Repository, owner, name, base string, b
 	return r.Storer.SetReference(ref)
 }
 
+// BlameFile returns line-by-line blame information for a file at the given ref.
+func (s *Service) BlameFile(owner, name, ref, filePath string) ([]models.BlameLine, error) {
+	r, err := s.openRepo(owner, name)
+	if err != nil {
+		return nil, err
+	}
+
+	sha, err := s.ResolveRef(owner, name, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	commit, err := r.CommitObject(plumbing.NewHash(sha))
+	if err != nil {
+		return nil, fmt.Errorf("get commit: %w", err)
+	}
+
+	filePath = strings.TrimPrefix(filePath, "/")
+	if filePath == "" {
+		return nil, fmt.Errorf("file path is empty")
+	}
+
+	// Check if the file exists and is not binary
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("get tree: %w", err)
+	}
+	f, err := tree.File(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("file not found: %s", filePath)
+	}
+	isBin, err := f.IsBinary()
+	if err != nil {
+		return nil, fmt.Errorf("check binary: %w", err)
+	}
+	if isBin {
+		return nil, fmt.Errorf("binary file: cannot blame binary files")
+	}
+	if f.Size > 512*1024 {
+		return nil, fmt.Errorf("file too large: blame is limited to files under 512KB")
+	}
+
+	result, err := gogit.Blame(commit, filePath)
+	if err != nil {
+		return nil, fmt.Errorf("blame: %w", err)
+	}
+
+	lines := make([]models.BlameLine, len(result.Lines))
+	for i, line := range result.Lines {
+		lines[i] = models.BlameLine{
+			CommitSHA:   line.Hash.String(),
+			AuthorName:  line.AuthorName,
+			AuthorEmail: line.Author,
+			Date:        line.Date,
+			LineNumber:  i + 1,
+			LineContent: line.Text,
+		}
+	}
+
+	return lines, nil
+}
+
 // DeleteBranch removes a branch reference from a bare repository.
 func (s *Service) DeleteBranch(owner, name, branch string) error {
 	r, err := s.openRepo(owner, name)

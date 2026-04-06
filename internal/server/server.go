@@ -304,6 +304,7 @@ func (s *Server) setupRoutes() {
 				r.Get("/tree/{ref}", s.browseHandler.GetTree) // root tree
 				r.Get("/blob/{ref}/*", s.browseHandler.GetBlob)
 				r.Get("/raw/{ref}/*", s.browseHandler.GetRawBlob)
+				r.Get("/blame/{ref}/*", s.browseHandler.GetBlame)
 
 				// Commits
 				r.Get("/commits", s.browseHandler.ListCommits)

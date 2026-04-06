@@ -4,6 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { get } from "../lib/api";
 import RepoHeader from "../components/RepoHeader";
 import CodeView from "../components/CodeView";
+import BlameView from "../components/BlameView";
+import type { BlameLineData } from "../components/BlameView";
 import Markdown from "../components/Markdown";
 
 interface Repo {
@@ -52,7 +54,8 @@ function detectTab(pathname: string): Tab {
   return "code";
 }
 
-function detectView(pathname: string): "tree" | "blob" | "root" {
+function detectView(pathname: string): "tree" | "blob" | "blame" | "root" {
+  if (pathname.includes("/blame/")) return "blame";
   if (pathname.includes("/blob/")) return "blob";
   if (pathname.includes("/tree/")) return "tree";
   return "root";
@@ -108,7 +111,7 @@ export default function RepoPage() {
         `/repos/${owner}/${repo}/tree/${currentRef}${path}`,
       ).then((r) => r.data);
     },
-    enabled: !!owner && !!repo && repoLoaded && tab === "code" && view !== "blob",
+    enabled: !!owner && !!repo && repoLoaded && tab === "code" && view !== "blob" && view !== "blame",
   });
 
   const blobQuery = useQuery({
@@ -117,7 +120,16 @@ export default function RepoPage() {
       get<Blob>(
         `/repos/${owner}/${repo}/blob/${currentRef}/${treePath}`,
       ).then((r) => r.data),
-    enabled: !!owner && !!repo && repoLoaded && view === "blob" && !!treePath,
+    enabled: !!owner && !!repo && repoLoaded && (view === "blob" || view === "blame") && !!treePath,
+  });
+
+  const blameQuery = useQuery({
+    queryKey: ["blame", owner, repo, currentRef, treePath],
+    queryFn: () =>
+      get<BlameLineData[]>(
+        `/repos/${owner}/${repo}/blame/${currentRef}/${treePath}`,
+      ).then((r) => r.data),
+    enabled: !!owner && !!repo && repoLoaded && view === "blame" && !!treePath,
   });
 
   const commitsQuery = useQuery({
@@ -210,23 +222,47 @@ export default function RepoPage() {
             />
           </div>
 
-          {view === "blob" ? (
-            blobQuery.isLoading ? (
+          {view === "blob" || view === "blame" ? (
+            blobQuery.isLoading || (view === "blame" && blameQuery.isLoading) ? (
               <p className="muted">Loading file...</p>
             ) : blobQuery.error ? (
               <div className="error-banner">
                 {blobQuery.error instanceof Error ? blobQuery.error.message : "Failed to load file"}
               </div>
+            ) : blameQuery.error && view === "blame" ? (
+              <div className="error-banner">
+                {blameQuery.error instanceof Error ? blameQuery.error.message : "Failed to load blame data"}
+              </div>
             ) : blobQuery.data ? (
               <div className="file-view">
                 <div className="file-header">
                   <span className="file-path">{treePath}</span>
-                  <span className="file-size">
-                    {formatSize(blobQuery.data.size)}
-                  </span>
+                  <div className="file-header-actions">
+                    <div className="file-view-toggle">
+                      <Link
+                        to={`/${owner}/${repo}/blob/${currentRef}/${treePath}`}
+                        className={`file-view-btn${view === "blob" ? " active" : ""}`}
+                      >
+                        Code
+                      </Link>
+                      <Link
+                        to={`/${owner}/${repo}/blame/${currentRef}/${treePath}`}
+                        className={`file-view-btn${view === "blame" ? " active" : ""}`}
+                      >
+                        Blame
+                      </Link>
+                    </div>
+                    <span className="file-size">
+                      {formatSize(blobQuery.data.size)}
+                    </span>
+                  </div>
                 </div>
                 <div className="file-content">
-                  <CodeView code={blobQuery.data.content} filename={treePath} />
+                  {view === "blame" && blameQuery.data ? (
+                    <BlameView lines={blameQuery.data} filename={treePath} />
+                  ) : (
+                    <CodeView code={blobQuery.data.content} filename={treePath} />
+                  )}
                 </div>
               </div>
             ) : null

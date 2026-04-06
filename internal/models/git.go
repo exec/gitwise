@@ -61,6 +61,16 @@ type CommitDetail struct {
 	} `json:"stats"`
 }
 
+// BlameLine represents a single line of blame output.
+type BlameLine struct {
+	CommitSHA   string    `json:"commit_sha"`
+	AuthorName  string    `json:"author_name"`
+	AuthorEmail string    `json:"author_email"`
+	Date        time.Time `json:"date"`
+	LineNumber  int       `json:"line_number"`
+	LineContent string    `json:"line_content"`
+}
+
 // Branch represents a git branch.
 type Branch struct {
 	Name   string `json:"name"`

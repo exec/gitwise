@@ -91,6 +91,7 @@ export default function App() {
         <Route path="/:username" element={<ProfilePage />} />
         <Route path="/:owner/:repo/tree/:ref/*" element={<RepoPage />} />
         <Route path="/:owner/:repo/blob/:ref/*" element={<RepoPage />} />
+        <Route path="/:owner/:repo/blame/:ref/*" element={<RepoPage />} />
         <Route path="/:owner/:repo/commits" element={<RepoPage />} />
 
         {/* Issues */}

@@ -159,6 +159,48 @@ func (h *BrowseHandler) GetCommit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, detail)
 }
 
+func (h *BrowseHandler) GetBlame(w http.ResponseWriter, r *http.Request) {
+	owner := chi.URLParam(r, "owner")
+	repoName := chi.URLParam(r, "repo")
+	ref := chi.URLParam(r, "ref")
+	filePath := chi.URLParam(r, "*")
+
+	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName, middleware.GetUserID(r.Context()))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "repository not found")
+		return
+	}
+
+	if ref == "" {
+		ref = repository.DefaultBranch
+	}
+
+	lines, err := h.git.BlameFile(owner, repoName, ref, filePath)
+	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "resolve ref") {
+			writeError(w, http.StatusNotFound, "not_found", "file not found")
+			return
+		}
+		if strings.Contains(errMsg, "binary file") {
+			writeError(w, http.StatusBadRequest, "binary_file", "cannot blame binary files")
+			return
+		}
+		if strings.Contains(errMsg, "file path is empty") {
+			writeError(w, http.StatusBadRequest, "bad_request", "file path is required")
+			return
+		}
+		if strings.Contains(errMsg, "file too large") {
+			writeError(w, http.StatusBadRequest, "file_too_large", "file is too large for blame (max 512KB)")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "server_error", "failed to get blame data")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, lines)
+}
+
 func (h *BrowseHandler) ListBranches(w http.ResponseWriter, r *http.Request) {
 	owner := chi.URLParam(r, "owner")
 	repoName := chi.URLParam(r, "repo")
