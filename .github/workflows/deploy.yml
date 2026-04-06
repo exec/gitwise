@@ -32,8 +32,7 @@ jobs:
               docker compose -f docker-compose.prod.yml exec -T postgres psql -U gitwise -f /dev/stdin < "$f" 2>&1 || true
             done
 
-            # Rebuild and restart app (preserves volumes and .env)
-            docker compose -f docker-compose.prod.yml up -d --build gitwise
-            docker compose -f docker-compose.prod.yml restart caddy
+            # Rebuild and restart all services (preserves volumes and .env)
+            docker compose -f docker-compose.prod.yml up -d --build
 
             echo "Deploy complete"
