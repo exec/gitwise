@@ -2,18 +2,19 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/gitwise-io/gitwise/internal/middleware"
 	"github.com/gitwise-io/gitwise/internal/models"
 	"github.com/gitwise-io/gitwise/internal/services/commit"
 	"github.com/gitwise-io/gitwise/internal/services/user"
@@ -24,6 +25,7 @@ type AdminHandler struct {
 	db            *pgxpool.Pool
 	users         *user.Service
 	commitIndexer *commit.Indexer
+	reindexing    atomic.Bool
 }
 
 func NewAdminHandler(db *pgxpool.Pool, users *user.Service, commitIndexer *commit.Indexer) *AdminHandler {
@@ -198,6 +200,12 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	currentUserID := middleware.GetUserID(r.Context())
+	if currentUserID != nil && *currentUserID == id {
+		writeError(w, http.StatusBadRequest, "self_modification", "cannot modify your own admin account")
+		return
+	}
+
 	var req struct {
 		IsAdmin *bool `json:"is_admin"`
 	}
@@ -256,6 +264,12 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	currentUserID := middleware.GetUserID(r.Context())
+	if currentUserID != nil && *currentUserID == id {
+		writeError(w, http.StatusBadRequest, "self_deletion", "cannot delete your own account from admin panel")
+		return
+	}
+
 	// Verify user exists
 	_, err = h.users.GetByID(r.Context(), id)
 	if err != nil {
@@ -289,28 +303,23 @@ func (h *AdminHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 		IssueCount   int    `json:"issue_count"`
 		PRCount      int    `json:"pr_count"`
 		DiskUsage    string `json:"disk_usage"`
-		ActiveSessions int  `json:"active_sessions"`
 	}
 
 	var s stats
 
-	h.db.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&s.UserCount)
-	h.db.QueryRow(ctx, `SELECT COUNT(*) FROM repositories`).Scan(&s.RepoCount)
-	h.db.QueryRow(ctx, `SELECT COUNT(*) FROM commit_metadata`).Scan(&s.CommitCount)
-	h.db.QueryRow(ctx, `SELECT COUNT(*) FROM issues`).Scan(&s.IssueCount)
-	h.db.QueryRow(ctx, `SELECT COUNT(*) FROM pull_requests`).Scan(&s.PRCount)
-
-	// Estimate disk usage from database size
-	var dbSize string
-	err := h.db.QueryRow(ctx, `SELECT pg_size_pretty(pg_database_size(current_database()))`).Scan(&dbSize)
+	err := h.db.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM users),
+			(SELECT COUNT(*) FROM repositories),
+			(SELECT COUNT(*) FROM commit_metadata),
+			(SELECT COUNT(*) FROM issues),
+			(SELECT COUNT(*) FROM pull_requests),
+			pg_size_pretty(pg_database_size(current_database()))
+	`).Scan(&s.UserCount, &s.RepoCount, &s.CommitCount, &s.IssueCount, &s.PRCount, &s.DiskUsage)
 	if err != nil {
-		dbSize = "unknown"
+		slog.Error("admin: failed to get stats", "error", err)
+		s.DiskUsage = "unknown"
 	}
-	s.DiskUsage = dbSize
-
-	// Count active sessions (approximate, from session cookies in Redis — not directly accessible here)
-	// We'll report 0 as we don't have direct Redis access in the handler. The frontend can note this.
-	s.ActiveSessions = 0
 
 	writeJSON(w, http.StatusOK, s)
 }
@@ -383,15 +392,16 @@ func (h *AdminHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 
 // ReindexCommits triggers commit re-indexing for all repos.
 func (h *AdminHandler) ReindexCommits(w http.ResponseWriter, r *http.Request) {
+	if !h.reindexing.CompareAndSwap(false, true) {
+		writeError(w, http.StatusConflict, "already_running", "reindex already in progress")
+		return
+	}
 	go func() {
+		defer h.reindexing.Store(false)
 		if err := h.commitIndexer.IndexAll(context.Background()); err != nil {
 			slog.Error("admin: commit reindex failed", "error", err)
 		}
 	}()
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]any{
-		"data": map[string]string{"status": "indexing started"},
-	})
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "indexing started"})
 }
 
