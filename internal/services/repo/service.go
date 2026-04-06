@@ -147,14 +147,19 @@ func (s *Service) GetByOwnerAndName(ctx context.Context, owner, name string, vie
 		return nil, fmt.Errorf("query repo: %w", err)
 	}
 
-	// Enforce visibility: private repos only visible to the owner (for user repos)
-	// or org members (for org repos, handled at a higher level)
+	// Enforce visibility: private repos only visible to the owner or org members
 	if repo.Visibility == "private" {
-		if viewerID == nil || *viewerID != repo.OwnerID {
-			// For org repos, also check membership — but we don't have the org service here.
-			// For now, let org repos be visible if viewer is the direct owner (org repo case
-			// is handled at the handler layer via team permission checks).
+		if viewerID == nil {
 			return nil, ErrNotFound
+		}
+		if *viewerID != repo.OwnerID {
+			// Check if viewer is an org member (covers org-owned repos)
+			var isMember bool
+			_ = s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2)`,
+				repo.OwnerID, *viewerID).Scan(&isMember)
+			if !isMember {
+				return nil, ErrNotFound
+			}
 		}
 	}
 
@@ -168,7 +173,7 @@ func (s *Service) ListByOwner(ctx context.Context, owner string, viewerID *uuid.
 		limit = 30
 	}
 
-	// Show private repos only if the viewer is the owner
+	// Show private repos if viewer is the owner (user repos) or an org member (org repos)
 	query := `
 		SELECT r.id, r.owner_id, COALESCE(u.username, o.name) AS owner_name,
 		       r.name, r.description, r.default_branch,
@@ -178,7 +183,9 @@ func (s *Service) ListByOwner(ctx context.Context, owner string, viewerID *uuid.
 		LEFT JOIN users u ON u.id = r.owner_id AND r.owner_type = 'user'
 		LEFT JOIN organizations o ON o.id = r.owner_id AND r.owner_type = 'org'
 		WHERE LOWER(COALESCE(u.username, o.name)) = $1
-		  AND (r.visibility = 'public' OR r.owner_id = $2)
+		  AND (r.visibility = 'public'
+		       OR r.owner_id = $2
+		       OR EXISTS(SELECT 1 FROM org_members WHERE org_id = r.owner_id AND user_id = $2))
 		ORDER BY r.updated_at DESC
 		LIMIT $3`
 

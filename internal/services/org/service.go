@@ -138,20 +138,20 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, req models.Creat
 		return nil, fmt.Errorf("%w: must be 1-39 alphanumeric characters, hyphens, dots, or underscores", ErrInvalidName)
 	}
 
-	// Check for username conflict
-	var usernameExists bool
-	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)`, name).Scan(&usernameExists); err != nil {
-		return nil, fmt.Errorf("check username conflict: %w", err)
-	}
-	if usernameExists {
-		return nil, ErrNameConflict
-	}
-
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
+
+	// Check for username conflict inside transaction to prevent TOCTOU race
+	var usernameExists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE username = $1 FOR SHARE)`, name).Scan(&usernameExists); err != nil {
+		return nil, fmt.Errorf("check username conflict: %w", err)
+	}
+	if usernameExists {
+		return nil, ErrNameConflict
+	}
 
 	o := &models.Organization{
 		ID:          uuid.New(),
@@ -235,6 +235,15 @@ func (s *Service) Update(ctx context.Context, orgName string, req models.UpdateO
 
 // Delete deletes an organization and all its members (cascading).
 func (s *Service) Delete(ctx context.Context, orgName string) error {
+	// Delete org-owned repos first (no FK cascade since owner_id is polymorphic)
+	_, err := s.db.Exec(ctx, `
+		DELETE FROM repositories WHERE owner_id = (
+			SELECT id FROM organizations WHERE name = $1
+		) AND owner_type = 'org'`, orgName)
+	if err != nil {
+		return fmt.Errorf("delete org repos: %w", err)
+	}
+
 	tag, err := s.db.Exec(ctx, `DELETE FROM organizations WHERE name = $1`, orgName)
 	if err != nil {
 		return fmt.Errorf("delete org: %w", err)

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { get, post, put, del, patch } from "../lib/api";
+import { get, post, put, del } from "../lib/api";
 import { avatarUrl } from "../lib/avatar";
 import { useAuthStore } from "../stores/auth";
 

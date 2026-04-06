@@ -93,11 +93,12 @@ func (s *Service) searchRepos(ctx context.Context, query string, userID *uuid.UU
 	if userID != nil {
 		rows, err = s.db.Query(ctx, `
 			SELECT r.id, r.name, r.description,
-				COALESCE(u.username, '') AS owner_name,
+				COALESCE(u.username, o.name, '') AS owner_name,
 				ts_rank(to_tsvector('english', r.name || ' ' || r.description), plainto_tsquery('english', $1)) +
 				similarity(r.name, $1) AS score
 			FROM repositories r
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
 			WHERE (to_tsvector('english', r.name || ' ' || r.description) @@ plainto_tsquery('english', $1)
 			   OR similarity(r.name, $1) > 0.1)
 			  AND (r.visibility = 'public' OR r.owner_id = $4)
@@ -107,11 +108,12 @@ func (s *Service) searchRepos(ctx context.Context, query string, userID *uuid.UU
 	} else {
 		rows, err = s.db.Query(ctx, `
 			SELECT r.id, r.name, r.description,
-				COALESCE(u.username, '') AS owner_name,
+				COALESCE(u.username, o.name, '') AS owner_name,
 				ts_rank(to_tsvector('english', r.name || ' ' || r.description), plainto_tsquery('english', $1)) +
 				similarity(r.name, $1) AS score
 			FROM repositories r
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
 			WHERE (to_tsvector('english', r.name || ' ' || r.description) @@ plainto_tsquery('english', $1)
 			   OR similarity(r.name, $1) > 0.1)
 			  AND r.visibility = 'public'
@@ -185,7 +187,7 @@ func (s *Service) searchIssues(ctx context.Context, query string, userID *uuid.U
 	if repoID != nil && userID != nil {
 		rows, err = s.db.Query(ctx, `
 			SELECT i.id, i.number, i.title, i.body, i.status,
-				COALESCE(u.username, '') AS owner_name,
+				COALESCE(u.username, o.name, '') AS owner_name,
 				r.name AS repo_name,
 				ts_rank(
 					to_tsvector('english', i.title) || to_tsvector('english', i.body),
@@ -194,6 +196,7 @@ func (s *Service) searchIssues(ctx context.Context, query string, userID *uuid.U
 			FROM issues i
 			JOIN repositories r ON i.repo_id = r.id
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
 			WHERE i.repo_id = $4
 			  AND (to_tsvector('english', i.title) || to_tsvector('english', i.body)) @@ plainto_tsquery('english', $1)
 			  AND (r.visibility = 'public' OR r.owner_id = $5)
@@ -203,7 +206,7 @@ func (s *Service) searchIssues(ctx context.Context, query string, userID *uuid.U
 	} else if repoID != nil {
 		rows, err = s.db.Query(ctx, `
 			SELECT i.id, i.number, i.title, i.body, i.status,
-				COALESCE(u.username, '') AS owner_name,
+				COALESCE(u.username, o.name, '') AS owner_name,
 				r.name AS repo_name,
 				ts_rank(
 					to_tsvector('english', i.title) || to_tsvector('english', i.body),
@@ -212,6 +215,7 @@ func (s *Service) searchIssues(ctx context.Context, query string, userID *uuid.U
 			FROM issues i
 			JOIN repositories r ON i.repo_id = r.id
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
 			WHERE i.repo_id = $4
 			  AND (to_tsvector('english', i.title) || to_tsvector('english', i.body)) @@ plainto_tsquery('english', $1)
 			  AND r.visibility = 'public'
@@ -221,7 +225,7 @@ func (s *Service) searchIssues(ctx context.Context, query string, userID *uuid.U
 	} else if userID != nil {
 		rows, err = s.db.Query(ctx, `
 			SELECT i.id, i.number, i.title, i.body, i.status,
-				COALESCE(u.username, '') AS owner_name,
+				COALESCE(u.username, o.name, '') AS owner_name,
 				r.name AS repo_name,
 				ts_rank(
 					to_tsvector('english', i.title) || to_tsvector('english', i.body),
@@ -230,6 +234,7 @@ func (s *Service) searchIssues(ctx context.Context, query string, userID *uuid.U
 			FROM issues i
 			JOIN repositories r ON i.repo_id = r.id
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
 			WHERE (to_tsvector('english', i.title) || to_tsvector('english', i.body)) @@ plainto_tsquery('english', $1)
 			  AND (r.visibility = 'public' OR r.owner_id = $4)
 			ORDER BY score DESC
@@ -238,7 +243,7 @@ func (s *Service) searchIssues(ctx context.Context, query string, userID *uuid.U
 	} else {
 		rows, err = s.db.Query(ctx, `
 			SELECT i.id, i.number, i.title, i.body, i.status,
-				COALESCE(u.username, '') AS owner_name,
+				COALESCE(u.username, o.name, '') AS owner_name,
 				r.name AS repo_name,
 				ts_rank(
 					to_tsvector('english', i.title) || to_tsvector('english', i.body),
@@ -247,6 +252,7 @@ func (s *Service) searchIssues(ctx context.Context, query string, userID *uuid.U
 			FROM issues i
 			JOIN repositories r ON i.repo_id = r.id
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
 			WHERE (to_tsvector('english', i.title) || to_tsvector('english', i.body)) @@ plainto_tsquery('english', $1)
 			  AND r.visibility = 'public'
 			ORDER BY score DESC
@@ -299,7 +305,7 @@ func (s *Service) searchPRs(ctx context.Context, query string, userID *uuid.UUID
 	if repoID != nil && userID != nil {
 		rows, err = s.db.Query(ctx, `
 			SELECT p.id, p.number, p.title, p.body, p.status,
-				COALESCE(u.username, '') AS owner_name,
+				COALESCE(u.username, o.name, '') AS owner_name,
 				r.name AS repo_name,
 				ts_rank(
 					to_tsvector('english', p.title) || to_tsvector('english', p.body),
@@ -308,6 +314,7 @@ func (s *Service) searchPRs(ctx context.Context, query string, userID *uuid.UUID
 			FROM pull_requests p
 			JOIN repositories r ON p.repo_id = r.id
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
 			WHERE p.repo_id = $4
 			  AND (to_tsvector('english', p.title) || to_tsvector('english', p.body)) @@ plainto_tsquery('english', $1)
 			  AND (r.visibility = 'public' OR r.owner_id = $5)
@@ -317,7 +324,7 @@ func (s *Service) searchPRs(ctx context.Context, query string, userID *uuid.UUID
 	} else if repoID != nil {
 		rows, err = s.db.Query(ctx, `
 			SELECT p.id, p.number, p.title, p.body, p.status,
-				COALESCE(u.username, '') AS owner_name,
+				COALESCE(u.username, o.name, '') AS owner_name,
 				r.name AS repo_name,
 				ts_rank(
 					to_tsvector('english', p.title) || to_tsvector('english', p.body),
@@ -326,6 +333,7 @@ func (s *Service) searchPRs(ctx context.Context, query string, userID *uuid.UUID
 			FROM pull_requests p
 			JOIN repositories r ON p.repo_id = r.id
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
 			WHERE p.repo_id = $4
 			  AND (to_tsvector('english', p.title) || to_tsvector('english', p.body)) @@ plainto_tsquery('english', $1)
 			  AND r.visibility = 'public'
@@ -335,7 +343,7 @@ func (s *Service) searchPRs(ctx context.Context, query string, userID *uuid.UUID
 	} else if userID != nil {
 		rows, err = s.db.Query(ctx, `
 			SELECT p.id, p.number, p.title, p.body, p.status,
-				COALESCE(u.username, '') AS owner_name,
+				COALESCE(u.username, o.name, '') AS owner_name,
 				r.name AS repo_name,
 				ts_rank(
 					to_tsvector('english', p.title) || to_tsvector('english', p.body),
@@ -344,6 +352,7 @@ func (s *Service) searchPRs(ctx context.Context, query string, userID *uuid.UUID
 			FROM pull_requests p
 			JOIN repositories r ON p.repo_id = r.id
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
 			WHERE (to_tsvector('english', p.title) || to_tsvector('english', p.body)) @@ plainto_tsquery('english', $1)
 			  AND (r.visibility = 'public' OR r.owner_id = $4)
 			ORDER BY score DESC
@@ -352,7 +361,7 @@ func (s *Service) searchPRs(ctx context.Context, query string, userID *uuid.UUID
 	} else {
 		rows, err = s.db.Query(ctx, `
 			SELECT p.id, p.number, p.title, p.body, p.status,
-				COALESCE(u.username, '') AS owner_name,
+				COALESCE(u.username, o.name, '') AS owner_name,
 				r.name AS repo_name,
 				ts_rank(
 					to_tsvector('english', p.title) || to_tsvector('english', p.body),
@@ -361,6 +370,7 @@ func (s *Service) searchPRs(ctx context.Context, query string, userID *uuid.UUID
 			FROM pull_requests p
 			JOIN repositories r ON p.repo_id = r.id
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
 			WHERE (to_tsvector('english', p.title) || to_tsvector('english', p.body)) @@ plainto_tsquery('english', $1)
 			  AND r.visibility = 'public'
 			ORDER BY score DESC
@@ -413,12 +423,13 @@ func (s *Service) searchCommits(ctx context.Context, query string, userID *uuid.
 	if repoID != nil && userID != nil {
 		rows, err = s.db.Query(ctx, `
 			SELECT c.sha, c.message, c.author_email,
-				COALESCE(u.username, '') AS owner_name,
+				COALESCE(u.username, o.name, '') AS owner_name,
 				r.name AS repo_name,
 				ts_rank(to_tsvector('english', c.message), plainto_tsquery('english', $1)) AS score
 			FROM commit_metadata c
 			JOIN repositories r ON c.repo_id = r.id
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
 			WHERE c.repo_id = $4
 			  AND to_tsvector('english', c.message) @@ plainto_tsquery('english', $1)
 			  AND (r.visibility = 'public' OR r.owner_id = $5)
@@ -428,12 +439,13 @@ func (s *Service) searchCommits(ctx context.Context, query string, userID *uuid.
 	} else if repoID != nil {
 		rows, err = s.db.Query(ctx, `
 			SELECT c.sha, c.message, c.author_email,
-				COALESCE(u.username, '') AS owner_name,
+				COALESCE(u.username, o.name, '') AS owner_name,
 				r.name AS repo_name,
 				ts_rank(to_tsvector('english', c.message), plainto_tsquery('english', $1)) AS score
 			FROM commit_metadata c
 			JOIN repositories r ON c.repo_id = r.id
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
 			WHERE c.repo_id = $4
 			  AND to_tsvector('english', c.message) @@ plainto_tsquery('english', $1)
 			  AND r.visibility = 'public'
@@ -443,12 +455,13 @@ func (s *Service) searchCommits(ctx context.Context, query string, userID *uuid.
 	} else if userID != nil {
 		rows, err = s.db.Query(ctx, `
 			SELECT c.sha, c.message, c.author_email,
-				COALESCE(u.username, '') AS owner_name,
+				COALESCE(u.username, o.name, '') AS owner_name,
 				r.name AS repo_name,
 				ts_rank(to_tsvector('english', c.message), plainto_tsquery('english', $1)) AS score
 			FROM commit_metadata c
 			JOIN repositories r ON c.repo_id = r.id
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
 			WHERE to_tsvector('english', c.message) @@ plainto_tsquery('english', $1)
 			  AND (r.visibility = 'public' OR r.owner_id = $4)
 			ORDER BY score DESC
@@ -457,12 +470,13 @@ func (s *Service) searchCommits(ctx context.Context, query string, userID *uuid.
 	} else {
 		rows, err = s.db.Query(ctx, `
 			SELECT c.sha, c.message, c.author_email,
-				COALESCE(u.username, '') AS owner_name,
+				COALESCE(u.username, o.name, '') AS owner_name,
 				r.name AS repo_name,
 				ts_rank(to_tsvector('english', c.message), plainto_tsquery('english', $1)) AS score
 			FROM commit_metadata c
 			JOIN repositories r ON c.repo_id = r.id
 			LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
 			WHERE to_tsvector('english', c.message) @@ plainto_tsquery('english', $1)
 			  AND r.visibility = 'public'
 			ORDER BY score DESC
@@ -524,12 +538,13 @@ func (s *Service) searchCode(ctx context.Context, query string, userID *uuid.UUI
 	args := []any{escaped, limit, offset, query}
 	qb := `
 		SELECT cf.id, cf.path, cf.content, cf.language,
-			COALESCE(u.username, '') AS owner_name,
+			COALESCE(u.username, o.name, '') AS owner_name,
 			r.name AS repo_name,
 			similarity(cf.content, $4) AS score
 		FROM code_files cf
 		JOIN repositories r ON cf.repo_id = r.id
 		LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+			LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
 		WHERE cf.content ILIKE '%' || $1 || '%'`
 
 	paramIdx := 5
