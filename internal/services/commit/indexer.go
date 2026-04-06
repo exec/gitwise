@@ -64,13 +64,18 @@ func (idx *Indexer) IndexRepo(ctx context.Context, repoID uuid.UUID, owner, repo
 			parents = append(parents, p.String())
 		}
 
+		// Look up user by email
+		var authorID *uuid.UUID
+		var uid uuid.UUID
+		if err := idx.db.QueryRow(ctx, `SELECT id FROM users WHERE email = $1 LIMIT 1`, c.Author.Email).Scan(&uid); err == nil {
+			authorID = &uid
+		}
+
 		_, err := idx.db.Exec(ctx, `
 			INSERT INTO commit_metadata (sha, repo_id, message, author_email, author_id, parent_shas, committed_at)
-			VALUES ($1, $2, $3, $4,
-				(SELECT id FROM users WHERE email = $4 LIMIT 1),
-				$5, $6)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (repo_id, sha) DO NOTHING`,
-			c.Hash.String(), repoID, c.Message, c.Author.Email, parents, c.Author.When,
+			c.Hash.String(), repoID, c.Message, c.Author.Email, authorID, parents, c.Author.When,
 		)
 		if err != nil {
 			slog.Warn("failed to index commit", "sha", c.Hash.String()[:7], "error", err)
