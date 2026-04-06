@@ -59,7 +59,7 @@ func (idx *Indexer) IndexRepo(ctx context.Context, repoID uuid.UUID, owner, repo
 	// Batch upsert
 	indexed := 0
 	for _, c := range commits {
-		var parents []string
+		parents := make([]string, 0, len(c.ParentHashes))
 		for _, p := range c.ParentHashes {
 			parents = append(parents, p.String())
 		}
