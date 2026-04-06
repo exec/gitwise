@@ -21,6 +21,8 @@ jobs:
           script: |
             set -e
             cd /opt/gitwise
+
+            # Pull latest code (preserves .env and local files not in repo)
             git fetch origin
             git checkout "origin/$BRANCH" -- .
             git reset HEAD .
@@ -30,7 +32,7 @@ jobs:
               docker compose -f docker-compose.prod.yml exec -T postgres psql -U gitwise -f /dev/stdin < "$f" 2>&1 || true
             done
 
-            # Rebuild and restart app (preserves volumes)
+            # Rebuild and restart app (preserves volumes and .env)
             docker compose -f docker-compose.prod.yml up -d --build gitwise
             docker compose -f docker-compose.prod.yml restart caddy
 

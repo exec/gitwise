@@ -1,0 +1,71 @@
+services:
+  gitwise:
+    build: .
+    environment:
+      GITWISE_DB_HOST: postgres
+      GITWISE_DB_PORT: 5432
+      GITWISE_DB_USER: gitwise
+      GITWISE_DB_PASSWORD: ${GITWISE_DB_PASSWORD:-gitwise}
+      GITWISE_DB_NAME: gitwise
+      GITWISE_REDIS_HOST: redis
+      GITWISE_REDIS_PORT: 6379
+      GITWISE_REPOS_PATH: /data/repos
+      GITWISE_SECRET: ${GITWISE_SECRET:-change-me-in-production}
+      GITWISE_BASE_URL: ${GITWISE_BASE_URL:-https://gitwise.byexec.com}
+      GITWISE_GITHUB_CLIENT_ID: ${GITWISE_GITHUB_CLIENT_ID:-}
+      GITWISE_GITHUB_CLIENT_SECRET: ${GITWISE_GITHUB_CLIENT_SECRET:-}
+      GITWISE_SSH_PORT: 2222
+    ports:
+      - "2222:2222"
+    volumes:
+      - repo_data:/data/repos
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: gitwise
+      POSTGRES_PASSWORD: ${GITWISE_DB_PASSWORD:-gitwise}
+      POSTGRES_DB: gitwise
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gitwise"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  redis_data:
+  repo_data:
+  caddy_data:
+  caddy_config:

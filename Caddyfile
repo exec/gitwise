@@ -1,0 +1,7 @@
+gitwise.byexec.com {
+	reverse_proxy gitwise:3000
+
+	request_body {
+		max_size 1GB
+	}
+}
