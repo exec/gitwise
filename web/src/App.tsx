@@ -19,12 +19,22 @@ import EditProfilePage from "./pages/EditProfilePage";
 import OrgPage from "./pages/OrgPage";
 import UserSettingsPage from "./pages/UserSettingsPage";
 import RepoSettingsPage from "./pages/RepoSettingsPage";
+import AdminPage from "./pages/AdminPage";
 import NotFoundPage from "./pages/NotFoundPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+  return <>{children}</>;
+}
+
+function RequireAdminGuard({ children }: { children: React.ReactNode }) {
+  const user = useAuthStore((s) => s.user);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  if (!isAuthenticated || !user?.is_admin) {
+    return <Navigate to="/" replace />;
   }
   return <>{children}</>;
 }
@@ -47,6 +57,16 @@ export default function App() {
             <RequireAuth>
               <NewRepoPage />
             </RequireAuth>
+          }
+        />
+
+        {/* Admin panel (secret path, requires admin) */}
+        <Route
+          path="/admin-8bc6d1f"
+          element={
+            <RequireAdminGuard>
+              <AdminPage />
+            </RequireAdminGuard>
           }
         />
 

@@ -135,6 +135,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     <Link to="/" className="user-dropdown-item" onClick={() => setDropdownOpen(false)}>
                       Your repos
                     </Link>
+                    {user.is_admin && (
+                      <Link to="/admin-8bc6d1f" className="user-dropdown-item" onClick={() => setDropdownOpen(false)}>
+                        Admin
+                      </Link>
+                    )}
                     <div className="user-dropdown-divider" />
                     <button className="user-dropdown-item user-dropdown-signout" onClick={handleLogout}>
                       Sign out
