@@ -187,6 +187,11 @@ func (s *Service) openRepo(owner, name string) (*gogit.Repository, error) {
 	return r, nil
 }
 
+// OpenRepo is the exported version of openRepo for use by other packages.
+func (s *Service) OpenRepo(owner, name string) (*gogit.Repository, error) {
+	return s.openRepo(owner, name)
+}
+
 // ResolveRef resolves a ref name (branch, tag, or full SHA hex) to a commit hash.
 // Only branches, tags, and 40-char hex SHAs are accepted — arbitrary revision
 // syntax (HEAD~3, @{upstream}, etc.) is rejected for safety.

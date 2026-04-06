@@ -17,6 +17,9 @@ type HTTPHandler struct {
 	// authFn resolves HTTP basic auth credentials to a username.
 	// Returns ("", false) if auth fails.
 	authFn func(username, password string) (string, bool)
+	// PostReceiveHook is called asynchronously after a successful git push.
+	// Parameters: owner, repoName.
+	PostReceiveHook func(owner, repoName string)
 }
 
 func NewHTTPHandler(git *Service, authFn func(string, string) (string, bool)) *HTTPHandler {
@@ -102,7 +105,16 @@ func (h *HTTPHandler) handleReceivePack(w http.ResponseWriter, r *http.Request, 
 	if !h.requireAuth(w, r) {
 		return
 	}
+
+	// Extract repo name from path for the post-receive hook
+	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 3)
+	repoName := strings.TrimSuffix(parts[1], ".git")
+
 	h.serveGitCommand(w, r, "receive-pack", repoPath)
+
+	if h.PostReceiveHook != nil {
+		go h.PostReceiveHook(owner, repoName)
+	}
 }
 
 func (h *HTTPHandler) serveGitCommand(w http.ResponseWriter, r *http.Request, service, repoPath string) {

@@ -33,6 +33,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/repo"
 	"github.com/gitwise-io/gitwise/internal/services/review"
 	"github.com/gitwise-io/gitwise/internal/services/embedding"
+	"github.com/gitwise-io/gitwise/internal/services/commit"
 	"github.com/gitwise-io/gitwise/internal/services/search"
 	"github.com/gitwise-io/gitwise/internal/services/user"
 	"github.com/gitwise-io/gitwise/internal/services/webhook"
@@ -63,6 +64,7 @@ type Server struct {
 	orgSvc        *org.Service
 	webhookSvc    *webhook.Service
 	embeddingSvc  *embedding.Service
+	commitIndexer *commit.Indexer
 
 	// WebSocket
 	wsHub *gitwisews.Hub
@@ -169,6 +171,9 @@ func (s *Server) initServices() {
 
 	s.webhookHandler = handlers.NewWebhookHandler(s.repoSvc, s.webhookSvc)
 
+	// Commit indexer
+	s.commitIndexer = commit.NewIndexer(s.db, s.gitSvc)
+
 	// Git HTTP protocol
 	s.gitHTTP = git.NewHTTPHandler(s.gitSvc, func(username, password string) (string, bool) {
 		u, err := s.userSvc.Authenticate(context.Background(), username, password)
@@ -181,6 +186,22 @@ func (s *Server) initServices() {
 		}
 		return u.Username, true
 	})
+
+	// Index commits after every push
+	s.gitHTTP.PostReceiveHook = func(owner, repoName string) {
+		var repoID uuid.UUID
+		err := s.db.QueryRow(context.Background(), `
+			SELECT r.id FROM repositories r
+			JOIN users u ON r.owner_id = u.id
+			WHERE u.username = $1 AND r.name = $2`, owner, repoName).Scan(&repoID)
+		if err != nil {
+			slog.Error("post-receive: repo lookup failed", "owner", owner, "repo", repoName, "error", err)
+			return
+		}
+		if _, err := s.commitIndexer.IndexRepo(context.Background(), repoID, owner, repoName); err != nil {
+			slog.Error("post-receive: commit indexing failed", "owner", owner, "repo", repoName, "error", err)
+		}
+	}
 }
 
 func (s *Server) setupMiddleware() {
@@ -332,6 +353,9 @@ func (s *Server) setupRoutes() {
 		r.Get("/search", s.searchHandler.Search)
 		r.Post("/search", s.searchHandler.Search)
 		r.With(middleware.RequireAuth).Post("/search/code/index", s.searchHandler.IndexRepo)
+
+		// Admin: backfill commit index for all repos
+		r.With(middleware.RequireAuth).Post("/admin/index-commits", s.handleIndexAllCommits)
 	})
 
 	// WebSocket endpoint (authenticated via session cookie or bearer token)
@@ -442,6 +466,17 @@ func (s *Server) spaHandler() http.HandlerFunc {
 
 		http.ServeFile(w, r, indexPath)
 	}
+}
+
+func (s *Server) handleIndexAllCommits(w http.ResponseWriter, r *http.Request) {
+	go func() {
+		if err := s.commitIndexer.IndexAll(context.Background()); err != nil {
+			slog.Error("commit backfill failed", "error", err)
+		}
+	}()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	fmt.Fprintf(w, `{"data":{"status":"indexing started"}}`)
 }
 
 func handleNotImplemented(w http.ResponseWriter, r *http.Request) {
