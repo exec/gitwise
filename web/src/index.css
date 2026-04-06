@@ -1921,8 +1921,7 @@ button.tab {
 }
 
 .contribution-graph-scroll {
-  overflow-x: auto;
-  padding-bottom: 4px;
+  width: 100%;
 }
 
 .contribution-tooltip {

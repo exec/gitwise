@@ -61,7 +61,7 @@ export default function ContributionGraph({ data }: ContributionGraphProps) {
   const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
   const weeks = buildGrid(data);
 
-  const cellSize = 11;
+  const cellSize = 10;
   const cellGap = 2;
   const step = cellSize + cellGap;
   const labelW = 28;
@@ -92,8 +92,8 @@ export default function ContributionGraph({ data }: ContributionGraphProps) {
       </h3>
       <div className="contribution-graph-scroll">
         <svg
-          width={svgW}
-          height={svgH}
+          viewBox={`0 0 ${svgW} ${svgH}`}
+          width="100%"
           onMouseLeave={() => setTooltip(null)}
         >
           {/* Month labels */}
