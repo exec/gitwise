@@ -15,7 +15,6 @@ import PullListPage from "./pages/PullListPage";
 import PullDetailPage from "./pages/PullDetailPage";
 import NewPullPage from "./pages/NewPullPage";
 import SearchPage from "./pages/SearchPage";
-import ProfilePage from "./pages/ProfilePage";
 import EditProfilePage from "./pages/EditProfilePage";
 import OwnerPage from "./pages/OwnerPage";
 import UserSettingsPage from "./pages/UserSettingsPage";
