@@ -84,8 +84,10 @@ func TestLoad_Defaults(t *testing.T) {
 		"GITWISE_DB_PASSWORD", "GITWISE_DB_NAME", "GITWISE_DB_SSLMODE",
 		"GITWISE_REDIS_HOST", "GITWISE_REDIS_PORT", "GITWISE_REDIS_PASSWORD", "GITWISE_REDIS_DB",
 		"GITWISE_REPOS_PATH", "GITWISE_FRONTEND_DIST",
-		"EMBEDDING_PROVIDER", "EMBEDDING_API_KEY", "EMBEDDING_MODEL",
+		"GITWISE_EMBEDDING_PROVIDER", "EMBEDDING_PROVIDER",
+		"EMBEDDING_API_KEY", "EMBEDDING_MODEL",
 		"EMBEDDING_DIMENSIONS", "EMBEDDING_WORKER_INTERVAL",
+		"GITWISE_OLLAMA_URL", "GITWISE_OLLAMA_MODEL",
 	}
 	for _, key := range envVars {
 		t.Setenv(key, "")
@@ -124,6 +126,12 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Embedding.WorkerInterval != 5*time.Minute {
 		t.Errorf("Embedding.WorkerInterval = %v, want 5m", cfg.Embedding.WorkerInterval)
 	}
+	if cfg.Embedding.OllamaURL != "http://localhost:11434" {
+		t.Errorf("Embedding.OllamaURL = %q, want %q", cfg.Embedding.OllamaURL, "http://localhost:11434")
+	}
+	if cfg.Embedding.OllamaModel != "nomic-embed-text" {
+		t.Errorf("Embedding.OllamaModel = %q, want %q", cfg.Embedding.OllamaModel, "nomic-embed-text")
+	}
 }
 
 func TestLoad_FromEnv(t *testing.T) {
@@ -135,6 +143,9 @@ func TestLoad_FromEnv(t *testing.T) {
 	t.Setenv("GITWISE_REPOS_PATH", "/var/repos")
 	t.Setenv("EMBEDDING_DIMENSIONS", "768")
 	t.Setenv("EMBEDDING_WORKER_INTERVAL", "10m")
+	t.Setenv("GITWISE_EMBEDDING_PROVIDER", "ollama")
+	t.Setenv("GITWISE_OLLAMA_URL", "http://gpu-server:11434")
+	t.Setenv("GITWISE_OLLAMA_MODEL", "mxbai-embed-large")
 
 	cfg := Load()
 
@@ -161,6 +172,15 @@ func TestLoad_FromEnv(t *testing.T) {
 	}
 	if cfg.Embedding.WorkerInterval != 10*time.Minute {
 		t.Errorf("Embedding.WorkerInterval = %v, want 10m", cfg.Embedding.WorkerInterval)
+	}
+	if cfg.Embedding.Provider != "ollama" {
+		t.Errorf("Embedding.Provider = %q, want %q", cfg.Embedding.Provider, "ollama")
+	}
+	if cfg.Embedding.OllamaURL != "http://gpu-server:11434" {
+		t.Errorf("Embedding.OllamaURL = %q, want %q", cfg.Embedding.OllamaURL, "http://gpu-server:11434")
+	}
+	if cfg.Embedding.OllamaModel != "mxbai-embed-large" {
+		t.Errorf("Embedding.OllamaModel = %q, want %q", cfg.Embedding.OllamaModel, "mxbai-embed-large")
 	}
 }
 

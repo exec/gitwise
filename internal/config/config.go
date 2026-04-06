@@ -33,6 +33,8 @@ type EmbeddingConfig struct {
 	Model          string
 	Dimensions     int
 	WorkerInterval time.Duration
+	OllamaURL      string
+	OllamaModel    string
 }
 
 type DatabaseConfig struct {
@@ -106,11 +108,13 @@ func Load() *Config {
 			DistPath: envStr("GITWISE_FRONTEND_DIST", "./web/dist"),
 		},
 		Embedding: EmbeddingConfig{
-			Provider:       envStr("EMBEDDING_PROVIDER", ""),
+			Provider:       envStr("GITWISE_EMBEDDING_PROVIDER", envStr("EMBEDDING_PROVIDER", "")),
 			APIKey:         envStr("EMBEDDING_API_KEY", ""),
 			Model:          envStr("EMBEDDING_MODEL", "text-embedding-3-small"),
 			Dimensions:     envInt("EMBEDDING_DIMENSIONS", 1536),
 			WorkerInterval: envDuration("EMBEDDING_WORKER_INTERVAL", 5*time.Minute),
+			OllamaURL:      envStr("GITWISE_OLLAMA_URL", "http://localhost:11434"),
+			OllamaModel:    envStr("GITWISE_OLLAMA_MODEL", "nomic-embed-text"),
 		},
 	}
 }

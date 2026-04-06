@@ -167,9 +167,21 @@ func (s *Server) initServices() {
 
 	// Embedding service
 	var embProvider embedding.Provider
-	if s.cfg.Embedding.Provider == "openai" && s.cfg.Embedding.APIKey != "" {
-		embProvider = embedding.NewOpenAIProvider(s.cfg.Embedding.APIKey, s.cfg.Embedding.Model, s.cfg.Embedding.Dimensions)
-		slog.Info("embedding provider enabled", "provider", "openai", "model", s.cfg.Embedding.Model)
+	switch s.cfg.Embedding.Provider {
+	case "openai":
+		if s.cfg.Embedding.APIKey != "" {
+			embProvider = embedding.NewOpenAIProvider(s.cfg.Embedding.APIKey, s.cfg.Embedding.Model, s.cfg.Embedding.Dimensions)
+			slog.Info("embedding provider enabled", "provider", "openai", "model", s.cfg.Embedding.Model)
+		} else {
+			slog.Warn("embedding provider set to openai but EMBEDDING_API_KEY is empty, falling back to disabled")
+		}
+	case "ollama":
+		embProvider = embedding.NewOllamaProvider(s.cfg.Embedding.OllamaURL, s.cfg.Embedding.OllamaModel, s.cfg.Embedding.Dimensions)
+		slog.Info("embedding provider enabled", "provider", "ollama", "model", s.cfg.Embedding.OllamaModel, "url", s.cfg.Embedding.OllamaURL)
+	case "none", "":
+		// Embeddings disabled — noop provider used by default
+	default:
+		slog.Warn("unknown embedding provider, falling back to disabled", "provider", s.cfg.Embedding.Provider)
 	}
 	s.embeddingSvc = embedding.NewService(s.db, embProvider)
 
