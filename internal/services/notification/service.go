@@ -82,47 +82,29 @@ func (s *Service) GetPreferences(ctx context.Context, userID uuid.UUID) (*models
 
 // UpdatePreferences upserts notification preferences for a user.
 func (s *Service) UpdatePreferences(ctx context.Context, userID uuid.UUID, req *models.UpdateNotificationPreferencesRequest) (*models.NotificationPreferences, error) {
-	// Get current preferences (or defaults)
-	prefs, err := s.GetPreferences(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
+	// Single atomic upsert using COALESCE to merge partial updates with
+	// existing values (or defaults). No read-then-write race condition.
+	var prefs models.NotificationPreferences
+	prefs.UserID = userID
 
-	// Apply partial updates
-	if req.PRReview != nil {
-		prefs.PRReview = *req.PRReview
-	}
-	if req.PRMerged != nil {
-		prefs.PRMerged = *req.PRMerged
-	}
-	if req.PRComment != nil {
-		prefs.PRComment = *req.PRComment
-	}
-	if req.IssueComment != nil {
-		prefs.IssueComment = *req.IssueComment
-	}
-	if req.Mention != nil {
-		prefs.Mention = *req.Mention
-	}
-
-	err = s.db.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		INSERT INTO notification_preferences (user_id, pr_review, pr_merged, pr_comment, issue_comment, mention, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, now())
+		VALUES ($1, COALESCE($2, TRUE), COALESCE($3, TRUE), COALESCE($4, TRUE), COALESCE($5, TRUE), COALESCE($6, TRUE), now())
 		ON CONFLICT (user_id) DO UPDATE SET
-			pr_review = EXCLUDED.pr_review,
-			pr_merged = EXCLUDED.pr_merged,
-			pr_comment = EXCLUDED.pr_comment,
-			issue_comment = EXCLUDED.issue_comment,
-			mention = EXCLUDED.mention,
+			pr_review = COALESCE($2, notification_preferences.pr_review),
+			pr_merged = COALESCE($3, notification_preferences.pr_merged),
+			pr_comment = COALESCE($4, notification_preferences.pr_comment),
+			issue_comment = COALESCE($5, notification_preferences.issue_comment),
+			mention = COALESCE($6, notification_preferences.mention),
 			updated_at = now()
-		RETURNING updated_at`,
-		userID, prefs.PRReview, prefs.PRMerged, prefs.PRComment, prefs.IssueComment, prefs.Mention,
-	).Scan(&prefs.UpdatedAt)
+		RETURNING pr_review, pr_merged, pr_comment, issue_comment, mention, updated_at`,
+		userID, req.PRReview, req.PRMerged, req.PRComment, req.IssueComment, req.Mention,
+	).Scan(&prefs.PRReview, &prefs.PRMerged, &prefs.PRComment, &prefs.IssueComment, &prefs.Mention, &prefs.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("upsert notification preferences: %w", err)
 	}
 
-	return prefs, nil
+	return &prefs, nil
 }
 
 // WatchRepo adds a user as a watcher of a repository.
