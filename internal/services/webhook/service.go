@@ -82,9 +82,10 @@ func isPrivateIP(ip net.IP) bool {
 }
 
 type Service struct {
-	db     *pgxpool.Pool
-	client *http.Client
-	stopCh chan struct{}
+	db       *pgxpool.Pool
+	client   *http.Client
+	cancel   context.CancelFunc
+	stopOnce sync.Once
 }
 
 func NewService(db *pgxpool.Pool) *Service {
@@ -117,25 +118,27 @@ func NewService(db *pgxpool.Pool) *Service {
 				return nil
 			},
 		},
-		stopCh: make(chan struct{}),
+		cancel: func() {},
 	}
 }
 
 // StartRetryLoop starts a background goroutine that periodically retries failed
 // webhook deliveries using exponential backoff.
 func (s *Service) StartRetryLoop() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-				if err := s.RetryPending(ctx); err != nil {
+				retryCtx, retryCancel := context.WithTimeout(ctx, 60*time.Second)
+				if err := s.RetryPending(retryCtx); err != nil {
 					slog.Error("webhook retry loop failed", "error", err)
 				}
-				cancel()
-			case <-s.stopCh:
+				retryCancel()
+			case <-ctx.Done():
 				return
 			}
 		}
@@ -145,7 +148,7 @@ func (s *Service) StartRetryLoop() {
 
 // StopRetryLoop signals the background retry goroutine to stop.
 func (s *Service) StopRetryLoop() {
-	close(s.stopCh)
+	s.stopOnce.Do(func() { s.cancel() })
 }
 
 func (s *Service) Create(ctx context.Context, repoID uuid.UUID, req models.CreateWebhookRequest) (*models.Webhook, error) {
