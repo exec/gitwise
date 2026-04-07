@@ -274,11 +274,8 @@ func (s *Server) initServices() {
 	s.agentSvc = agentsvc.NewService(s.db)
 	s.agentHandler = handlers.NewAgentHandler(s.repoSvc, s.agentSvc)
 
-	// Chat service + context builder + handler
+	// Chat service + context builder + handler (LLM wired after gateway init below)
 	s.chatSvc = chat.NewService(s.db)
-	if s.llmGateway != nil && s.llmGateway.IsEnabled() {
-		s.chatSvc.SetLLMGenerator(&llmChatAdapter{gw: s.llmGateway})
-	}
 	s.ctxBuilder = chat.NewContextBuilder(s.db, s.agentSvc)
 	s.chatHandler = handlers.NewChatHandler(s.repoSvc, s.chatSvc, s.ctxBuilder)
 
@@ -330,6 +327,12 @@ func (s *Server) initServices() {
 	}
 	s.llmGateway = llm.NewGateway(llmProvider)
 	s.llmQueue = llm.NewQueue(s.rdb, s.db, s.llmGateway, s.cfg.LLM.QueueWorkers)
+
+	// Wire LLM into chat service now that the gateway is initialized
+	if s.llmGateway.IsEnabled() {
+		s.chatSvc.SetLLMGenerator(&llmChatAdapter{gw: s.llmGateway})
+		slog.Info("chat LLM generator wired")
+	}
 
 	// Ensure bot user exists
 	if botID, err := llm.EnsureBotUser(context.Background(), s.db); err != nil {
