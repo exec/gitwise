@@ -22,10 +22,17 @@ var (
 	ErrInvalidRole          = errors.New("invalid message role")
 )
 
+// ChatStreamChunk is a single piece of a streaming LLM response.
+type ChatStreamChunk struct {
+	Content string
+	Done    bool
+}
+
 // LLMGenerator is the interface for generating LLM responses.
 // The implementation will be provided by the LLM Gateway (built by another agent).
 type LLMGenerator interface {
 	Generate(ctx context.Context, systemPrompt string, messages []models.LLMMessage, maxTokens int) (string, error)
+	GenerateStream(ctx context.Context, systemPrompt string, messages []models.LLMMessage, maxTokens int) (<-chan ChatStreamChunk, error)
 }
 
 type Service struct {
@@ -210,4 +217,13 @@ func (s *Service) GenerateResponse(ctx context.Context, systemPrompt string, mes
 		return "", fmt.Errorf("no LLM provider configured")
 	}
 	return s.llm.Generate(ctx, systemPrompt, messages, maxTokens)
+}
+
+// GenerateStreamResponse uses the LLM generator to produce a streaming assistant response.
+// Returns a channel of ChatStreamChunk, or an error if no LLM is configured.
+func (s *Service) GenerateStreamResponse(ctx context.Context, systemPrompt string, messages []models.LLMMessage, maxTokens int) (<-chan ChatStreamChunk, error) {
+	if s.llm == nil {
+		return nil, fmt.Errorf("no LLM provider configured")
+	}
+	return s.llm.GenerateStream(ctx, systemPrompt, messages, maxTokens)
 }

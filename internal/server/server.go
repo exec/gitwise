@@ -853,6 +853,33 @@ func (a *llmChatAdapter) Generate(ctx context.Context, systemPrompt string, mess
 	return resp.Content, nil
 }
 
+func (a *llmChatAdapter) GenerateStream(ctx context.Context, systemPrompt string, messages []models.LLMMessage, maxTokens int) (<-chan chat.ChatStreamChunk, error) {
+	llmMsgs := make([]llm.Message, len(messages))
+	for i, m := range messages {
+		llmMsgs[i] = llm.Message{Role: m.Role, Content: m.Content}
+	}
+	llmCh, err := a.gw.GenerateStream(ctx, llm.GenerateRequest{
+		SystemPrompt: systemPrompt,
+		Messages:     llmMsgs,
+		MaxTokens:    maxTokens,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ch := make(chan chat.ChatStreamChunk)
+	go func() {
+		defer close(ch)
+		for chunk := range llmCh {
+			ch <- chat.ChatStreamChunk{
+				Content: chunk.Content,
+				Done:    chunk.Done,
+			}
+		}
+	}()
+	return ch, nil
+}
+
 // seedOfficialAgent creates the "Gitwise Agent" in the agents table if it doesn't exist.
 func (s *Server) seedOfficialAgent() {
 	var exists bool

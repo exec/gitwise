@@ -4,6 +4,8 @@ import { get, post, del } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
 import Markdown from "./Markdown";
 
+const API_BASE = "/api/v1";
+
 interface ChatConversation {
   id: string;
   title: string;
@@ -86,22 +88,11 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
     },
   });
 
-  const sendMessage = useMutation({
-    mutationFn: (content: string) =>
-      post<ChatMessage>(
-        `/repos/${owner}/${repo}/chat/${activeConversation}/messages`,
-        { content },
-      ).then((r) => r.data),
-    onSuccess: () => {
-      setMessageInput("");
-      queryClient.invalidateQueries({
-        queryKey: ["chat-conversation", owner, repo, activeConversation],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["chat-conversations", owner, repo],
-      });
-    },
-  });
+  const [isSending, setIsSending] = useState(false);
+  const [streamingContent, setStreamingContent] = useState("");
+  const [sendError, setSendError] = useState<string | null>(null);
+  // Hold the optimistic user message to display immediately
+  const [optimisticUserMsg, setOptimisticUserMsg] = useState<ChatMessage | null>(null);
 
   const deleteConversation = useMutation({
     mutationFn: (convId: string) =>
@@ -131,12 +122,94 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
 
   useEffect(() => {
     scrollToBottom();
-  }, [conversationQuery.data, scrollToBottom]);
+  }, [conversationQuery.data, streamingContent, scrollToBottom]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const content = messageInput.trim();
-    if (!content || !activeConversation || sendMessage.isPending) return;
-    sendMessage.mutate(content);
+    if (!content || !activeConversation || isSending) return;
+
+    setMessageInput("");
+    setIsSending(true);
+    setStreamingContent("");
+    setSendError(null);
+    setOptimisticUserMsg(null);
+
+    try {
+      const resp = await fetch(
+        `${API_BASE}/repos/${owner}/${repo}/chat/${activeConversation}/messages`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+          credentials: "include",
+        },
+      );
+
+      if (!resp.ok || !resp.body) {
+        setSendError(`Request failed with status ${resp.status}`);
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events from buffer
+        const events = buffer.split("\n\n");
+        buffer = events.pop()!; // Keep incomplete event in buffer
+
+        for (const event of events) {
+          if (!event.trim()) continue;
+          const lines = event.split("\n");
+          let eventType = "";
+          let data = "";
+
+          for (const line of lines) {
+            if (line.startsWith("event: ")) eventType = line.slice(7);
+            if (line.startsWith("data: ")) data = line.slice(6);
+          }
+
+          if (eventType === "user_message" && data) {
+            const msg = JSON.parse(data) as ChatMessage;
+            setOptimisticUserMsg(msg);
+          } else if (eventType === "chunk" && data) {
+            const chunk = JSON.parse(data) as { content: string };
+            setStreamingContent((prev) => prev + chunk.content);
+          } else if (eventType === "tool_call") {
+            setStreamingContent((prev) => prev + "\n\n*Reading files...*\n\n");
+          } else if (eventType === "assistant_message") {
+            // Final saved message — we clear streaming content; the
+            // invalidation below will fetch it from the DB.
+            setStreamingContent("");
+            setOptimisticUserMsg(null);
+          } else if (eventType === "error" && data) {
+            const errData = JSON.parse(data) as { message: string };
+            setSendError(errData.message);
+          } else if (eventType === "done") {
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "Failed to send message");
+    } finally {
+      setIsSending(false);
+      setStreamingContent("");
+      setOptimisticUserMsg(null);
+      // Refresh conversation to get the saved messages from DB
+      queryClient.invalidateQueries({
+        queryKey: ["chat-conversation", owner, repo, activeConversation],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["chat-conversations", owner, repo],
+      });
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -320,7 +393,23 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
                 </div>
               ))}
 
-              {sendMessage.isPending && (
+              {optimisticUserMsg && (
+                <div className="chat-message chat-message-user">
+                  <div className="chat-message-content">
+                    <Markdown content={optimisticUserMsg.content} />
+                  </div>
+                </div>
+              )}
+
+              {streamingContent && (
+                <div className="chat-message chat-message-assistant">
+                  <div className="chat-message-content">
+                    <Markdown content={streamingContent} />
+                  </div>
+                </div>
+              )}
+
+              {isSending && !streamingContent && (
                 <div className="chat-message chat-message-assistant">
                   <div className="chat-typing">
                     <span></span>
@@ -335,11 +424,9 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
 
             {activeConversation && (
               <div className="chat-input-area">
-                {sendMessage.error && (
+                {sendError && (
                   <div className="chat-error">
-                    {sendMessage.error instanceof Error
-                      ? sendMessage.error.message
-                      : "Failed to send message"}
+                    {sendError}
                   </div>
                 )}
                 <div className="chat-input">
@@ -350,13 +437,13 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
                     onKeyDown={handleKeyDown}
                     placeholder="Ask about this repository..."
                     rows={2}
-                    disabled={sendMessage.isPending}
+                    disabled={isSending}
                   />
                   <button
                     className="chat-send-btn"
                     onClick={handleSend}
                     disabled={
-                      !messageInput.trim() || sendMessage.isPending
+                      !messageInput.trim() || isSending
                     }
                     title="Send message"
                   >

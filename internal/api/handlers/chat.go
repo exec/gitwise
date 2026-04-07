@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -145,7 +147,18 @@ func (h *ChatHandler) GetConversation(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// SendMessage sends a message in a conversation and gets an AI response.
+// sseWrite writes a single SSE event to the response writer and flushes.
+func sseWrite(w http.ResponseWriter, flusher http.Flusher, event string, data any) {
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		slog.Error("failed to marshal SSE data", "error", err)
+		return
+	}
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, jsonBytes)
+	flusher.Flush()
+}
+
+// SendMessage sends a message in a conversation and streams the AI response via SSE.
 // POST /api/v1/repos/{owner}/{repo}/chat/{id}/messages
 func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r.Context())
@@ -200,22 +213,39 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Build context
+	// 2. Set SSE headers — from this point on we cannot use writeError
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		slog.Error("response writer does not support flushing")
+		writeError(w, http.StatusInternalServerError, "server_error", "streaming not supported")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	// 3. Send user message event
+	sseWrite(w, flusher, "user_message", userMsg)
+
+	// 4. Build context
 	contextStr, err := h.context.BuildChatContext(r.Context(), repository.ID, req.Content, 4000)
 	if err != nil {
 		slog.Warn("failed to build chat context, proceeding without context", "error", err)
 		contextStr = ""
 	}
 
-	// 3. Get conversation history for LLM
+	// 5. Get conversation history for LLM
 	messages, err := h.chat.ListMessages(r.Context(), convID)
 	if err != nil {
 		slog.Error("failed to list messages", "error", err)
-		writeError(w, http.StatusInternalServerError, "server_error", "failed to get conversation history")
+		sseWrite(w, flusher, "error", map[string]string{"message": "failed to get conversation history"})
+		sseWrite(w, flusher, "done", map[string]string{})
 		return
 	}
 
-	// 4. Try to generate LLM response
+	// 6. Generate LLM response with streaming
 	var assistantContent string
 	if h.chat.HasLLM() {
 		systemPrompt := fmt.Sprintf(`You are the Gitwise AI assistant for the repository %s/%s. You help users understand their codebase, answer questions about code, and assist with development tasks.
@@ -239,10 +269,12 @@ When referencing code, always mention the file path. Be concise and helpful.`, r
 			})
 		}
 
-		assistantContent, err = h.chat.GenerateResponse(r.Context(), systemPrompt, llmMsgs, 4096)
+		// Stream the first iteration
+		assistantContent, err = h.streamLLMResponse(w, flusher, r.Context(), systemPrompt, llmMsgs, 4096)
 		if err != nil {
-			slog.Error("LLM generation failed", "error", err)
+			slog.Error("LLM streaming failed", "error", err)
 			assistantContent = "I'm sorry, I was unable to generate a response. The AI provider may be unavailable. Please try again later."
+			sseWrite(w, flusher, "chunk", map[string]string{"content": assistantContent})
 		}
 
 		// Agentic loop: resolve <read_file> tool calls
@@ -254,6 +286,9 @@ When referencing code, always mention the file path. Be concise and helpful.`, r
 			}
 
 			slog.Debug("chat tool call: read_file", "files", files, "iteration", i+1)
+
+			// Notify frontend about tool call
+			sseWrite(w, flusher, "tool_call", map[string]any{"files": files})
 
 			var fileContents strings.Builder
 			for _, path := range files {
@@ -270,9 +305,10 @@ When referencing code, always mention the file path. Be concise and helpful.`, r
 				models.LLMMessage{Role: "user", Content: "Here are the requested file contents:\n\n" + fileContents.String()},
 			)
 
-			assistantContent, err = h.chat.GenerateResponse(r.Context(), systemPrompt, llmMsgs, 4096)
+			// Stream the next iteration
+			assistantContent, err = h.streamLLMResponse(w, flusher, r.Context(), systemPrompt, llmMsgs, 4096)
 			if err != nil {
-				slog.Error("LLM generation failed during tool loop", "error", err, "iteration", i+1)
+				slog.Error("LLM streaming failed during tool loop", "error", err, "iteration", i+1)
 				break
 			}
 		}
@@ -281,21 +317,39 @@ When referencing code, always mention the file path. Be concise and helpful.`, r
 		assistantContent = stripReadFileTags(assistantContent)
 	} else {
 		assistantContent = "The AI assistant is not configured. Please configure an LLM provider in your Gitwise settings to enable chat."
+		sseWrite(w, flusher, "chunk", map[string]string{"content": assistantContent})
 	}
 
-	// 5. Save assistant message
+	// 7. Save assistant message
 	assistantMsg, err := h.chat.AddMessage(r.Context(), convID, "assistant", assistantContent)
 	if err != nil {
 		slog.Error("failed to save assistant message", "error", err)
-		writeError(w, http.StatusInternalServerError, "server_error", "failed to save response")
+		sseWrite(w, flusher, "error", map[string]string{"message": "failed to save response"})
+		sseWrite(w, flusher, "done", map[string]string{})
 		return
 	}
 
-	// 6. Return both messages
-	writeJSON(w, http.StatusOK, &models.SendMessageResponse{
-		UserMessage:      userMsg,
-		AssistantMessage: assistantMsg,
-	})
+	// 8. Send the final complete assistant message and done event
+	sseWrite(w, flusher, "assistant_message", assistantMsg)
+	sseWrite(w, flusher, "done", map[string]string{})
+}
+
+// streamLLMResponse streams one LLM generation to the client via SSE chunks,
+// accumulating and returning the full response text.
+func (h *ChatHandler) streamLLMResponse(w http.ResponseWriter, flusher http.Flusher, ctx context.Context, systemPrompt string, llmMsgs []models.LLMMessage, maxTokens int) (string, error) {
+	ch, err := h.chat.GenerateStreamResponse(ctx, systemPrompt, llmMsgs, maxTokens)
+	if err != nil {
+		return "", err
+	}
+
+	var accumulated strings.Builder
+	for chunk := range ch {
+		if chunk.Content != "" {
+			accumulated.WriteString(chunk.Content)
+			sseWrite(w, flusher, "chunk", map[string]string{"content": chunk.Content})
+		}
+	}
+	return accumulated.String(), nil
 }
 
 // DeleteConversation deletes a conversation.
