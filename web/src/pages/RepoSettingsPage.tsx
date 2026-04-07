@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { get, post, patch, del } from "../lib/api";
 import RepoHeader from "../components/RepoHeader";
 
-type SettingsTab = "general" | "webhooks" | "branch-protection" | "labels" | "milestones";
+type SettingsTab = "general" | "webhooks" | "branch-protection" | "labels" | "milestones" | "agents";
 
 interface Repo {
   id: string;
@@ -83,7 +83,7 @@ export default function RepoSettingsPage() {
       <RepoHeader owner={owner!} repo={repo!} activeTab="settings" />
       <div className="settings-page">
         <nav className="settings-sidebar">
-          {(["general", "webhooks", "branch-protection", "labels", "milestones"] as SettingsTab[]).map((tab) => (
+          {(["general", "webhooks", "branch-protection", "labels", "milestones", "agents"] as SettingsTab[]).map((tab) => (
             <button
               key={tab}
               className={`settings-tab ${activeTab === tab ? "active" : ""}`}
@@ -108,6 +108,9 @@ export default function RepoSettingsPage() {
           )}
           {activeTab === "milestones" && (
             <MilestonesTab owner={owner!} repo={repo!} queryClient={queryClient} />
+          )}
+          {activeTab === "agents" && (
+            <AgentsSettingsTab owner={owner!} repo={repo!} queryClient={queryClient} />
           )}
         </div>
       </div>
@@ -1076,6 +1079,427 @@ function MilestonesTab({
           })}
         </ul>
       )}
+    </div>
+  );
+}
+
+/* ---- Agents Settings Tab ---- */
+
+interface AvailableAgent {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  is_official: boolean;
+}
+
+interface InstalledAgent {
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  agent_slug: string;
+  is_official: boolean;
+  enabled: boolean;
+  config: {
+    review_on_push?: boolean;
+    open_issues?: boolean;
+    auto_update_docs?: boolean;
+  };
+  instructions: string;
+  trigger_events: string[];
+}
+
+function AgentsSettingsTab({
+  owner,
+  repo,
+  queryClient,
+}: {
+  owner: string;
+  repo: string;
+  queryClient: ReturnType<typeof useQueryClient>;
+}) {
+  const [showAddAgent, setShowAddAgent] = useState(false);
+  const [configAgentId, setConfigAgentId] = useState<string | null>(null);
+
+  // Installed agents
+  const installedQuery = useQuery({
+    queryKey: ["repo-agents", owner, repo],
+    queryFn: () =>
+      get<InstalledAgent[]>(`/repos/${owner}/${repo}/agents`).then((r) => r.data),
+  });
+
+  // Available agents (for add dialog)
+  const availableQuery = useQuery({
+    queryKey: ["available-agents"],
+    queryFn: () => get<AvailableAgent[]>("/agents").then((r) => r.data),
+    enabled: showAddAgent,
+  });
+
+  // Install agent
+  const installMutation = useMutation({
+    mutationFn: (agentSlug: string) =>
+      post(`/repos/${owner}/${repo}/agents`, { agent_slug: agentSlug }),
+    onSuccess: () => {
+      setShowAddAgent(false);
+      queryClient.invalidateQueries({ queryKey: ["repo-agents", owner, repo] });
+    },
+  });
+
+  // Toggle enable/disable
+  const toggleMutation = useMutation({
+    mutationFn: ({ slug, enabled }: { slug: string; enabled: boolean }) =>
+      put(`/repos/${owner}/${repo}/agents/${slug}`, { enabled }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["repo-agents", owner, repo] });
+    },
+  });
+
+  // Uninstall agent
+  const uninstallMutation = useMutation({
+    mutationFn: (slug: string) =>
+      del(`/repos/${owner}/${repo}/agents/${slug}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["repo-agents", owner, repo] });
+    },
+  });
+
+  if (installedQuery.isLoading) return <p className="muted">Loading...</p>;
+
+  const installed = installedQuery.data ?? [];
+  const configAgent = configAgentId
+    ? installed.find((a) => a.id === configAgentId)
+    : null;
+
+  if (configAgent) {
+    return (
+      <AgentConfigForm
+        owner={owner}
+        repo={repo}
+        agent={configAgent}
+        queryClient={queryClient}
+        onBack={() => setConfigAgentId(null)}
+      />
+    );
+  }
+
+  return (
+    <div>
+      <div className="settings-header">
+        <h2>Agents</h2>
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={() => setShowAddAgent(true)}
+        >
+          + Add Agent
+        </button>
+      </div>
+
+      {installedQuery.error && (
+        <div className="error-banner">
+          {installedQuery.error instanceof Error
+            ? installedQuery.error.message
+            : "Failed to load agents"}
+        </div>
+      )}
+
+      {installed.length === 0 && (
+        <p className="muted">
+          No agents installed. Click &quot;+ Add Agent&quot; to get started with
+          AI-powered code review and documentation.
+        </p>
+      )}
+
+      {installed.length > 0 && (
+        <ul className="agent-install-list">
+          {installed.map((agent) => (
+            <li key={agent.id} className="agent-install-card">
+              <div className="agent-install-info">
+                <div className="agent-install-name">
+                  {agent.agent_name}
+                  {agent.is_official && (
+                    <span className="agent-official-badge">Official</span>
+                  )}
+                </div>
+                <div className="agent-install-slug">{agent.agent_slug}</div>
+              </div>
+              <div className="agent-install-actions">
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={agent.enabled}
+                    onChange={() =>
+                      toggleMutation.mutate({
+                        slug: agent.agent_slug,
+                        enabled: !agent.enabled,
+                      })
+                    }
+                    disabled={toggleMutation.isPending}
+                  />
+                  <span className="toggle-slider" />
+                </label>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setConfigAgentId(agent.id)}
+                >
+                  Configure
+                </button>
+                <button
+                  className="btn btn-sm btn-danger"
+                  onClick={() => uninstallMutation.mutate(agent.agent_slug)}
+                  disabled={uninstallMutation.isPending}
+                >
+                  Remove
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {showAddAgent && (
+        <div className="confirm-overlay" onClick={() => setShowAddAgent(false)}>
+          <div className="confirm-dialog agent-add-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>Add Agent</h3>
+            {availableQuery.isLoading && <p className="muted">Loading agents...</p>}
+            {availableQuery.error && (
+              <div className="error-banner">
+                {availableQuery.error instanceof Error
+                  ? availableQuery.error.message
+                  : "Failed to load agents"}
+              </div>
+            )}
+            {availableQuery.data && availableQuery.data.length === 0 && (
+              <p className="muted">No agents available.</p>
+            )}
+            {availableQuery.data && (
+              <ul className="agent-available-list">
+                {availableQuery.data.map((agent) => {
+                  const alreadyInstalled = installed.some(
+                    (i) => i.agent_slug === agent.slug,
+                  );
+                  return (
+                    <li key={agent.id} className="agent-available-item">
+                      <div className="agent-available-info">
+                        <span className="agent-available-name">
+                          {agent.name}
+                          {agent.is_official && (
+                            <span className="agent-official-badge">Official</span>
+                          )}
+                        </span>
+                        {agent.description && (
+                          <span className="agent-available-desc">
+                            {agent.description}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        className="btn btn-primary btn-sm"
+                        disabled={alreadyInstalled || installMutation.isPending}
+                        onClick={() => installMutation.mutate(agent.slug)}
+                      >
+                        {alreadyInstalled ? "Installed" : "Install"}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {installMutation.error && (
+              <div className="error-banner">
+                {installMutation.error instanceof Error
+                  ? installMutation.error.message
+                  : "Failed to install agent"}
+              </div>
+            )}
+            <div className="confirm-actions">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setShowAddAgent(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---- Agent Configuration Form ---- */
+
+function AgentConfigForm({
+  owner,
+  repo,
+  agent,
+  queryClient,
+  onBack,
+}: {
+  owner: string;
+  repo: string;
+  agent: InstalledAgent;
+  queryClient: ReturnType<typeof useQueryClient>;
+  onBack: () => void;
+}) {
+  const [instructions, setInstructions] = useState(agent.instructions ?? "");
+  const [triggerPush, setTriggerPush] = useState(
+    agent.trigger_events?.includes("push") ?? true,
+  );
+  const [triggerSchedule, setTriggerSchedule] = useState(
+    agent.trigger_events?.includes("schedule") ?? false,
+  );
+  const [triggerManual, setTriggerManual] = useState(
+    agent.trigger_events?.includes("manual") ?? false,
+  );
+  const [reviewOnPush, setReviewOnPush] = useState(
+    agent.config?.review_on_push ?? true,
+  );
+  const [openIssues, setOpenIssues] = useState(
+    agent.config?.open_issues ?? true,
+  );
+  const [updateDocs, setUpdateDocs] = useState(
+    agent.config?.auto_update_docs ?? true,
+  );
+  const [ignorePatterns, setIgnorePatterns] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      const triggerEvents: string[] = [];
+      if (triggerPush) triggerEvents.push("push");
+      if (triggerSchedule) triggerEvents.push("schedule");
+      if (triggerManual) triggerEvents.push("manual");
+
+      return put(`/repos/${owner}/${repo}/agents/${agent.agent_slug}`, {
+        instructions,
+        trigger_events: triggerEvents,
+        config: {
+          review_on_push: reviewOnPush,
+          open_issues: openIssues,
+          auto_update_docs: updateDocs,
+          ignore_patterns: ignorePatterns
+            .split(",")
+            .map((p) => p.trim())
+            .filter(Boolean),
+        },
+      });
+    },
+    onSuccess: () => {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      queryClient.invalidateQueries({ queryKey: ["repo-agents", owner, repo] });
+    },
+  });
+
+  return (
+    <div className="agent-config-form">
+      <button className="btn btn-secondary btn-sm" onClick={onBack}>
+        &larr; Back to agents
+      </button>
+      <h2 style={{ marginTop: 16 }}>
+        Configure {agent.agent_name}
+        {agent.is_official && (
+          <span className="agent-official-badge">Official</span>
+        )}
+      </h2>
+
+      <div className="form-group">
+        <label>Custom Instructions</label>
+        <textarea
+          className="form-input"
+          rows={6}
+          value={instructions}
+          onChange={(e) => setInstructions(e.target.value)}
+          placeholder="Provide specific instructions for the agent (like CLAUDE.md for the agent)..."
+        />
+      </div>
+
+      <div className="form-group">
+        <label>Trigger Events</label>
+        <div className="agent-config-checkboxes">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={triggerPush}
+              onChange={(e) => setTriggerPush(e.target.checked)}
+            />
+            Push
+          </label>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={triggerSchedule}
+              onChange={(e) => setTriggerSchedule(e.target.checked)}
+            />
+            Schedule
+          </label>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={triggerManual}
+              onChange={(e) => setTriggerManual(e.target.checked)}
+            />
+            Manual
+          </label>
+        </div>
+      </div>
+
+      <div className="form-group">
+        <label>Behavior</label>
+        <div className="agent-config-checkboxes">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={reviewOnPush}
+              onChange={(e) => setReviewOnPush(e.target.checked)}
+            />
+            Review on push
+          </label>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={openIssues}
+              onChange={(e) => setOpenIssues(e.target.checked)}
+            />
+            Open issues
+          </label>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={updateDocs}
+              onChange={(e) => setUpdateDocs(e.target.checked)}
+            />
+            Update docs
+          </label>
+        </div>
+      </div>
+
+      <div className="form-group">
+        <label>Ignore Patterns (comma-separated globs)</label>
+        <input
+          type="text"
+          className="form-input"
+          value={ignorePatterns}
+          onChange={(e) => setIgnorePatterns(e.target.value)}
+          placeholder="*.test.ts, vendor/**, dist/**"
+        />
+      </div>
+
+      {saveMutation.error && (
+        <div className="error-banner">
+          {saveMutation.error instanceof Error
+            ? saveMutation.error.message
+            : "Failed to save configuration"}
+        </div>
+      )}
+
+      <button
+        className="btn btn-primary"
+        onClick={() => saveMutation.mutate()}
+        disabled={saveMutation.isPending}
+      >
+        {saveMutation.isPending ? "Saving..." : saved ? "Saved!" : "Save"}
+      </button>
     </div>
   );
 }

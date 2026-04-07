@@ -5,12 +5,14 @@ import { get, post, patch } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
 import RepoHeader from "../components/RepoHeader";
 import Markdown from "../components/Markdown";
+import BotBadge from "../components/BotBadge";
 
 interface Issue {
   id: string;
   number: number;
   author_id: string;
   author_name: string;
+  author_is_bot?: boolean;
   title: string;
   body: string;
   status: string;
@@ -25,6 +27,7 @@ interface Comment {
   id: string;
   author_id: string;
   author_name: string;
+  author_is_bot?: boolean;
   body: string;
   created_at: string;
 }
@@ -196,7 +199,7 @@ export default function IssueDetailPage() {
                   {issue.status}
                 </span>
                 <span className="issue-meta-info">
-                  <Link to={`/${issue.author_name}`} className="author-link">{issue.author_name}</Link> opened on{" "}
+                  <Link to={`/${issue.author_name}`} className="author-link">{issue.author_name}</Link><BotBadge isBot={issue.author_is_bot} /> opened on{" "}
                   {new Date(issue.created_at).toLocaleDateString()}
                 </span>
               </div>
@@ -264,7 +267,7 @@ export default function IssueDetailPage() {
           {commentsQuery.data?.map((c) => (
             <div key={c.id} className="comment-card">
               <div className="comment-header">
-                <strong><Link to={`/${c.author_name}`} className="author-link">{c.author_name}</Link></strong>
+                <strong><Link to={`/${c.author_name}`} className="author-link">{c.author_name}</Link><BotBadge isBot={c.author_is_bot} /></strong>
                 <span className="comment-date">
                   {new Date(c.created_at).toLocaleDateString()}
                 </span>
