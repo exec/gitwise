@@ -292,6 +292,47 @@ func (s *Service) ListTree(owner, name, ref, treePath string) ([]models.TreeEntr
 	return entries, nil
 }
 
+// ListAllFiles returns the paths of all files in the repository at the given ref.
+// It walks the tree recursively. If maxEntries > 0, it stops after that many entries.
+func (s *Service) ListAllFiles(owner, name, ref string, maxEntries int) ([]string, error) {
+	r, err := s.openRepo(owner, name)
+	if err != nil {
+		return nil, err
+	}
+
+	sha, err := s.ResolveRef(owner, name, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	commit, err := r.CommitObject(plumbing.NewHash(sha))
+	if err != nil {
+		return nil, fmt.Errorf("get commit: %w", err)
+	}
+
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("get tree: %w", err)
+	}
+
+	var paths []string
+	iter := tree.Files()
+	defer iter.Close()
+	for {
+		f, err := iter.Next()
+		if err != nil {
+			break
+		}
+		paths = append(paths, f.Name)
+		if maxEntries > 0 && len(paths) >= maxEntries {
+			break
+		}
+	}
+
+	sort.Strings(paths)
+	return paths, nil
+}
+
 // GetBlob returns the content of a file at the given path and ref.
 func (s *Service) GetBlob(owner, name, ref, filePath string) (*models.BlobContent, error) {
 	r, err := s.openRepo(owner, name)

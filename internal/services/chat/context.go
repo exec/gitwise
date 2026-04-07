@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/gitwise-io/gitwise/internal/git"
 	"github.com/gitwise-io/gitwise/internal/services/agent"
 )
 
@@ -15,13 +16,15 @@ import (
 type ContextBuilder struct {
 	db       *pgxpool.Pool
 	agentSvc *agent.Service
+	gitSvc   *git.Service
 }
 
 // NewContextBuilder creates a new context builder.
-func NewContextBuilder(db *pgxpool.Pool, agentSvc *agent.Service) *ContextBuilder {
+func NewContextBuilder(db *pgxpool.Pool, agentSvc *agent.Service, gitSvc *git.Service) *ContextBuilder {
 	return &ContextBuilder{
 		db:       db,
 		agentSvc: agentSvc,
+		gitSvc:   gitSvc,
 	}
 }
 
@@ -43,7 +46,13 @@ func (cb *ContextBuilder) BuildChatContext(ctx context.Context, repoID uuid.UUID
 		sections = append(sections, repoCtx)
 	}
 
-	// 2. Agent-generated docs (most valuable for chat context)
+	// 2. File tree (fetched once per message)
+	treeCtx, err := cb.buildTreeSection(ctx, repoID)
+	if err == nil && treeCtx != "" {
+		sections = append(sections, treeCtx)
+	}
+
+	// 3. Agent-generated docs (most valuable for chat context)
 	docsCtx, err := cb.buildDocsSection(ctx, repoID, query)
 	if err == nil && docsCtx != "" {
 		sections = append(sections, docsCtx)
@@ -117,6 +126,65 @@ func (cb *ContextBuilder) buildRepoSection(ctx context.Context, repoID uuid.UUID
 	}
 
 	return strings.Join(parts, "\n"), nil
+}
+
+// buildTreeSection builds the repository file tree context section.
+func (cb *ContextBuilder) buildTreeSection(ctx context.Context, repoID uuid.UUID) (string, error) {
+	if cb.gitSvc == nil {
+		return "", nil
+	}
+
+	var repoName, ownerName, defaultBranch string
+	err := cb.db.QueryRow(ctx, `
+		SELECT r.name, COALESCE(u.username, o.name) AS owner_name, r.default_branch
+		FROM repositories r
+		LEFT JOIN users u ON u.id = r.owner_id AND r.owner_type = 'user'
+		LEFT JOIN organizations o ON o.id = r.owner_id AND r.owner_type = 'org'
+		WHERE r.id = $1`, repoID).Scan(&repoName, &ownerName, &defaultBranch)
+	if err != nil {
+		return "", fmt.Errorf("query repo for tree: %w", err)
+	}
+
+	if defaultBranch == "" {
+		defaultBranch = "main"
+	}
+
+	const maxEntries = 250
+	paths, err := cb.gitSvc.ListAllFiles(ownerName, repoName, defaultBranch, maxEntries)
+	if err != nil {
+		return "", nil // non-fatal: empty repos or missing branch
+	}
+	if len(paths) == 0 {
+		return "", nil
+	}
+
+	tree := formatFileTree(paths, 200)
+	return fmt.Sprintf("## Repository Structure\n```\n%s\n```", tree), nil
+}
+
+// formatFileTree takes sorted file paths and produces an indented tree listing.
+// If there are more than maxDisplay entries, it truncates and adds a note.
+func formatFileTree(paths []string, maxDisplay int) string {
+	total := len(paths)
+	display := paths
+	if total > maxDisplay {
+		display = paths[:maxDisplay]
+	}
+
+	var b strings.Builder
+	for _, p := range display {
+		parts := strings.Split(p, "/")
+		indent := strings.Repeat("  ", len(parts)-1)
+		b.WriteString(indent)
+		b.WriteString(parts[len(parts)-1])
+		b.WriteByte('\n')
+	}
+
+	if total > maxDisplay {
+		fmt.Fprintf(&b, "... and %d more files\n", total-maxDisplay)
+	}
+
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // buildDocsSection builds the agent documents context section.

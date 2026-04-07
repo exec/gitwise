@@ -276,8 +276,8 @@ func (s *Server) initServices() {
 
 	// Chat service + context builder + handler (LLM wired after gateway init below)
 	s.chatSvc = chat.NewService(s.db)
-	s.ctxBuilder = chat.NewContextBuilder(s.db, s.agentSvc)
-	s.chatHandler = handlers.NewChatHandler(s.repoSvc, s.chatSvc, s.ctxBuilder)
+	s.ctxBuilder = chat.NewContextBuilder(s.db, s.agentSvc, s.gitSvc)
+	s.chatHandler = handlers.NewChatHandler(s.repoSvc, s.chatSvc, s.ctxBuilder, s.gitSvc)
 
 	// Seed official Gitwise Agent if it doesn't exist
 	s.seedOfficialAgent()

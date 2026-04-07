@@ -2,12 +2,16 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/gitwise-io/gitwise/internal/git"
 	"github.com/gitwise-io/gitwise/internal/middleware"
 	"github.com/gitwise-io/gitwise/internal/models"
 	"github.com/gitwise-io/gitwise/internal/services/chat"
@@ -18,10 +22,11 @@ type ChatHandler struct {
 	repos   *repo.Service
 	chat    *chat.Service
 	context *chat.ContextBuilder
+	gitSvc  *git.Service
 }
 
-func NewChatHandler(repos *repo.Service, chatSvc *chat.Service, ctxBuilder *chat.ContextBuilder) *ChatHandler {
-	return &ChatHandler{repos: repos, chat: chatSvc, context: ctxBuilder}
+func NewChatHandler(repos *repo.Service, chatSvc *chat.Service, ctxBuilder *chat.ContextBuilder, gitSvc *git.Service) *ChatHandler {
+	return &ChatHandler{repos: repos, chat: chatSvc, context: ctxBuilder, gitSvc: gitSvc}
 }
 
 // resolveRepoForChat resolves the repo from URL params for chat endpoints.
@@ -213,7 +218,14 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	// 4. Try to generate LLM response
 	var assistantContent string
 	if h.chat.HasLLM() {
-		systemPrompt := "You are the Gitwise AI assistant for a code repository. Help the user understand their codebase, answer questions about code, and assist with development tasks."
+		systemPrompt := fmt.Sprintf(`You are the Gitwise AI assistant for the repository %s/%s. You help users understand their codebase, answer questions about code, and assist with development tasks.
+
+You have access to the repository's file tree and can read file contents. To read a file, include this tag in your response:
+<read_file>path/to/file</read_file>
+
+You can request multiple files at once. After you request files, you'll receive their contents and can then provide your answer.
+
+When referencing code, always mention the file path. Be concise and helpful.`, repository.OwnerName, repository.Name)
 		if contextStr != "" {
 			systemPrompt += "\n\nHere is relevant context about the repository:\n\n" + contextStr
 		}
@@ -232,6 +244,41 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 			slog.Error("LLM generation failed", "error", err)
 			assistantContent = "I'm sorry, I was unable to generate a response. The AI provider may be unavailable. Please try again later."
 		}
+
+		// Agentic loop: resolve <read_file> tool calls
+		const maxToolIterations = 5
+		for i := 0; i < maxToolIterations; i++ {
+			files := parseReadFileRequests(assistantContent)
+			if len(files) == 0 {
+				break
+			}
+
+			slog.Debug("chat tool call: read_file", "files", files, "iteration", i+1)
+
+			var fileContents strings.Builder
+			for _, path := range files {
+				content, readErr := readRepoFile(h.gitSvc, repository.OwnerName, repository.Name, repository.DefaultBranch, path)
+				if readErr != nil {
+					fmt.Fprintf(&fileContents, "File %s: error reading - %s\n\n", path, readErr)
+				} else {
+					fmt.Fprintf(&fileContents, "File %s:\n```\n%s\n```\n\n", path, content)
+				}
+			}
+
+			llmMsgs = append(llmMsgs,
+				models.LLMMessage{Role: "assistant", Content: assistantContent},
+				models.LLMMessage{Role: "user", Content: "Here are the requested file contents:\n\n" + fileContents.String()},
+			)
+
+			assistantContent, err = h.chat.GenerateResponse(r.Context(), systemPrompt, llmMsgs, 4096)
+			if err != nil {
+				slog.Error("LLM generation failed during tool loop", "error", err, "iteration", i+1)
+				break
+			}
+		}
+
+		// Strip any remaining <read_file> tags from the final response
+		assistantContent = stripReadFileTags(assistantContent)
 	} else {
 		assistantContent = "The AI assistant is not configured. Please configure an LLM provider in your Gitwise settings to enable chat."
 	}
@@ -283,4 +330,50 @@ func (h *ChatHandler) DeleteConversation(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// readFileRe matches <read_file>path</read_file> tags in LLM responses.
+var readFileRe = regexp.MustCompile(`<read_file>(.*?)</read_file>`)
+
+// parseReadFileRequests extracts file paths from <read_file> tags in the response.
+func parseReadFileRequests(content string) []string {
+	matches := readFileRe.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(matches))
+	var paths []string
+	for _, m := range matches {
+		p := strings.TrimSpace(m[1])
+		if p != "" && !seen[p] {
+			seen[p] = true
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
+// stripReadFileTags removes any <read_file>...</read_file> tags from the content.
+func stripReadFileTags(content string) string {
+	return readFileRe.ReplaceAllString(content, "")
+}
+
+// readRepoFile reads a file from the repository via the git service with a size cap.
+func readRepoFile(gitSvc *git.Service, owner, repoName, ref, path string) (string, error) {
+	if gitSvc == nil {
+		return "", fmt.Errorf("git service not available")
+	}
+	blob, err := gitSvc.GetBlob(owner, repoName, ref, path)
+	if err != nil {
+		return "", err
+	}
+	if blob.IsBinary {
+		return "", fmt.Errorf("binary file")
+	}
+	content := blob.Content
+	const maxFileSize = 50000
+	if len(content) > maxFileSize {
+		content = content[:maxFileSize] + "\n... (truncated, file too large)"
+	}
+	return content, nil
 }
