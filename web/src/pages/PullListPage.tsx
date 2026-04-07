@@ -3,11 +3,13 @@ import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { get } from "../lib/api";
 import RepoHeader from "../components/RepoHeader";
+import BotBadge from "../components/BotBadge";
 
 interface PullRequest {
   id: string;
   number: number;
   author_name: string;
+  author_is_bot?: boolean;
   title: string;
   source_branch: string;
   target_branch: string;
@@ -117,7 +119,7 @@ export default function PullListPage() {
                 </Link>
               </div>
               <div className="issue-meta">
-                #{pr.number} by <Link to={`/${pr.author_name}`} className="author-link">{pr.author_name}</Link> &middot;{" "}
+                #{pr.number} by <Link to={`/${pr.author_name}`} className="author-link">{pr.author_name}</Link><BotBadge isBot={pr.author_is_bot} /> &middot;{" "}
                 {pr.source_branch} &rarr; {pr.target_branch} &middot;{" "}
                 {new Date(pr.created_at).toLocaleDateString()}
               </div>

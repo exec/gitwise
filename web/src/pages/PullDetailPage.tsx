@@ -6,6 +6,7 @@ import { useAuthStore } from "../stores/auth";
 import RepoHeader from "../components/RepoHeader";
 import DiffViewer from "../components/DiffViewer";
 import Markdown from "../components/Markdown";
+import BotBadge from "../components/BotBadge";
 
 interface PRIntent {
   type?: string;
@@ -18,6 +19,7 @@ interface PullRequest {
   number: number;
   author_id: string;
   author_name: string;
+  author_is_bot?: boolean;
   title: string;
   body: string;
   source_branch: string;
@@ -72,6 +74,7 @@ interface ReviewInlineComment {
 interface Review {
   id: string;
   author_name: string;
+  author_is_bot?: boolean;
   type: string;
   body: string;
   comments: string | ReviewInlineComment[] | null; // JSON string or parsed array
@@ -81,6 +84,7 @@ interface Review {
 interface Comment {
   id: string;
   author_name: string;
+  author_is_bot?: boolean;
   body: string;
   created_at: string;
 }
@@ -319,7 +323,7 @@ export default function PullDetailPage() {
                   {pr.status}
                 </span>
                 <span className="issue-meta-info">
-                  <Link to={`/${pr.author_name}`} className="author-link">{pr.author_name}</Link> wants to merge{" "}
+                  <Link to={`/${pr.author_name}`} className="author-link">{pr.author_name}</Link><BotBadge isBot={pr.author_is_bot} /> wants to merge{" "}
                   <code>{pr.source_branch}</code> into{" "}
                   <code>{pr.target_branch}</code>
                 </span>
@@ -407,7 +411,7 @@ export default function PullDetailPage() {
             {!isEditing && pr.body && (
               <div className="comment-card">
                 <div className="comment-header">
-                  <strong><Link to={`/${pr.author_name}`} className="author-link">{pr.author_name}</Link></strong>
+                  <strong><Link to={`/${pr.author_name}`} className="author-link">{pr.author_name}</Link><BotBadge isBot={pr.author_is_bot} /></strong>
                   <span className="comment-date">
                     {new Date(pr.created_at).toLocaleDateString()}
                   </span>
@@ -421,7 +425,7 @@ export default function PullDetailPage() {
             {reviewsQuery.data?.map((rev) => (
               <div key={rev.id} className={`comment-card review-card review-${rev.type}`}>
                 <div className="comment-header">
-                  <strong><Link to={`/${rev.author_name}`} className="author-link">{rev.author_name}</Link></strong>
+                  <strong><Link to={`/${rev.author_name}`} className="author-link">{rev.author_name}</Link><BotBadge isBot={rev.author_is_bot} /></strong>
                   <span className={`review-type-badge ${rev.type}`}>
                     {rev.type === "approval"
                       ? "Approved"
@@ -444,7 +448,7 @@ export default function PullDetailPage() {
             {commentsQuery.data?.map((c) => (
               <div key={c.id} className="comment-card">
                 <div className="comment-header">
-                  <strong><Link to={`/${c.author_name}`} className="author-link">{c.author_name}</Link></strong>
+                  <strong><Link to={`/${c.author_name}`} className="author-link">{c.author_name}</Link><BotBadge isBot={c.author_is_bot} /></strong>
                   <span className="comment-date">
                     {new Date(c.created_at).toLocaleDateString()}
                   </span>

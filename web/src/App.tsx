@@ -21,6 +21,7 @@ import UserSettingsPage from "./pages/UserSettingsPage";
 import RepoSettingsPage from "./pages/RepoSettingsPage";
 import AdminPage from "./pages/AdminPage";
 import ImportPage from "./pages/ImportPage";
+import AgentsTab from "./pages/AgentsTab";
 import NotFoundPage from "./pages/NotFoundPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -125,6 +126,9 @@ export default function App() {
             </RequireAuth>
           }
         />
+
+        {/* Agents tab */}
+        <Route path="/:owner/:repo/agents" element={<AgentsTab />} />
 
         {/* Repo pages */}
         <Route path="/:owner/:repo" element={<RepoPage />} />

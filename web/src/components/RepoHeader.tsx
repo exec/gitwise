@@ -18,7 +18,7 @@ interface WatchStatus {
 interface RepoHeaderProps {
   owner: string;
   repo: string;
-  activeTab: "code" | "issues" | "pulls" | "commits" | "settings";
+  activeTab: "code" | "issues" | "pulls" | "commits" | "agents" | "settings";
 }
 
 export default function RepoHeader({ owner, repo, activeTab }: RepoHeaderProps) {
@@ -136,6 +136,12 @@ export default function RepoHeader({ owner, repo, activeTab }: RepoHeaderProps) 
           className={`tab ${activeTab === "commits" ? "tab-active" : ""}`}
         >
           Commits
+        </Link>
+        <Link
+          to={`/${owner}/${repo}/agents`}
+          className={`tab ${activeTab === "agents" ? "tab-active" : ""}`}
+        >
+          Agents
         </Link>
         {isOwner && (
           <Link

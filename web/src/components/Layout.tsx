@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { get } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
@@ -7,6 +7,7 @@ import { useThemeStore } from "../stores/theme";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import NotificationBell from "./NotificationBell";
 import KeyboardShortcutsHelp from "./KeyboardShortcutsHelp";
+import ChatPanel from "./ChatPanel";
 
 interface OrgMembership {
   id: string;
@@ -14,6 +15,20 @@ interface OrgMembership {
   display_name: string;
   avatar_url: string;
   role: string;
+}
+
+function useRepoContext(): { owner: string; repo: string } | null {
+  const location = useLocation();
+  const parts = location.pathname.split("/").filter(Boolean);
+  // Repo pages: /:owner/:repo, /:owner/:repo/issues, etc.
+  // Exclude non-repo top-level paths
+  const nonRepoPaths = [
+    "login", "register", "new", "search", "settings", "admin-8bc6d1f", "orgs",
+  ];
+  if (parts.length >= 2 && !nonRepoPaths.includes(parts[0])) {
+    return { owner: parts[0], repo: parts[1] };
+  }
+  return null;
 }
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -29,6 +44,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const repoContext = useRepoContext();
 
   const handleToggleHelp = useCallback(() => {
     setShortcutsOpen((v) => !v);
@@ -206,6 +222,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         isOpen={shortcutsOpen}
         onClose={handleCloseShortcuts}
       />
+      {repoContext && (
+        <ChatPanel owner={repoContext.owner} repo={repoContext.repo} />
+      )}
     </div>
   );
 }
