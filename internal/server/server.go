@@ -25,6 +25,8 @@ import (
 	"github.com/gitwise-io/gitwise/internal/git"
 	"github.com/gitwise-io/gitwise/internal/middleware"
 	"github.com/gitwise-io/gitwise/internal/services/activity"
+	agentsvc "github.com/gitwise-io/gitwise/internal/services/agent"
+	"github.com/gitwise-io/gitwise/internal/services/chat"
 	"github.com/gitwise-io/gitwise/internal/services/comment"
 	"github.com/gitwise-io/gitwise/internal/services/commit"
 	"github.com/gitwise-io/gitwise/internal/services/embedding"
@@ -77,6 +79,9 @@ type Server struct {
 	commitIndexer *commit.Indexer
 	totpSvc       *totpsvc.Service
 	importSvc     *importer.Service
+	agentSvc      *agentsvc.Service
+	chatSvc       *chat.Service
+	ctxBuilder    *chat.ContextBuilder
 
 	// WebSocket
 	wsHub *gitwisews.Hub
@@ -105,6 +110,8 @@ type Server struct {
 	twoFactorHandler *handlers.TwoFactorHandler
 	adminHandler     *handlers.AdminHandler
 	importHandler    *handlers.ImportHandler
+	agentHandler     *handlers.AgentHandler
+	chatHandler      *handlers.ChatHandler
 
 	// Git protocol
 	gitHTTP *git.HTTPHandler
@@ -258,6 +265,15 @@ func (s *Server) initServices() {
 	// Import service + handler
 	s.importSvc = importer.NewService(s.db, s.rdb, s.gitSvc, s.repoSvc, s.issueSvc, s.pullSvc, s.commentSvc)
 	s.importHandler = handlers.NewImportHandler(s.importSvc)
+
+	// Agent service + handler
+	s.agentSvc = agentsvc.NewService(s.db)
+	s.agentHandler = handlers.NewAgentHandler(s.repoSvc, s.agentSvc)
+
+	// Chat service + context builder + handler
+	s.chatSvc = chat.NewService(s.db)
+	s.ctxBuilder = chat.NewContextBuilder(s.db, s.agentSvc)
+	s.chatHandler = handlers.NewChatHandler(s.repoSvc, s.chatSvc, s.ctxBuilder)
 
 	// Admin handler (after commitIndexer is initialized)
 	s.adminHandler = handlers.NewAdminHandler(s.db, s.userSvc, s.commitIndexer)
@@ -444,6 +460,28 @@ func (s *Server) setupRoutes() {
 						r.Get("/{webhookID}/deliveries", s.webhookHandler.ListDeliveries)
 						r.Post("/{webhookID}/test", s.webhookHandler.Test)
 					})
+
+					// Agents (repo-level)
+					r.Get("/agents", s.agentHandler.ListForRepo)
+					r.With(middleware.RequireAuth).Post("/agents", s.agentHandler.Install)
+					r.With(middleware.RequireAuth).Put("/agents/{slug}", s.agentHandler.UpdateConfig)
+					r.With(middleware.RequireAuth).Delete("/agents/{slug}", s.agentHandler.Uninstall)
+					r.With(middleware.RequireAuth).Post("/agents/{slug}/trigger", s.agentHandler.TriggerAgent)
+
+					// Agent documents
+					r.Get("/docs", s.agentHandler.ListDocuments)
+					r.Get("/docs/{id}", s.agentHandler.GetDocument)
+
+					// Agent tasks
+					r.Get("/tasks", s.agentHandler.ListTasks)
+					r.Get("/tasks/{id}", s.agentHandler.GetTask)
+
+					// Chat
+					r.With(middleware.RequireAuth).Post("/chat", s.chatHandler.CreateConversation)
+					r.With(middleware.RequireAuth).Get("/chat", s.chatHandler.ListConversations)
+					r.With(middleware.RequireAuth).Get("/chat/{id}", s.chatHandler.GetConversation)
+					r.With(middleware.RequireAuth).Post("/chat/{id}/messages", s.chatHandler.SendMessage)
+					r.With(middleware.RequireAuth).Delete("/chat/{id}", s.chatHandler.DeleteConversation)
 			})
 		})
 
@@ -518,6 +556,13 @@ func (s *Server) setupRoutes() {
 			r.Post("/gitlab", s.importHandler.ImportGitLab)
 			r.Get("/status/{id}", s.importHandler.GetImportStatus)
 		})
+
+		// Agent management (global)
+		r.Get("/agents", s.agentHandler.ListAvailable)
+		r.With(middleware.RequireAuth).Post("/agents", s.agentHandler.Create)
+		r.Get("/agents/{slug}", s.agentHandler.GetBySlug)
+		r.With(middleware.RequireAuth).Put("/agents/{slug}", s.agentHandler.Update)
+		r.With(middleware.RequireAuth).Delete("/agents/{slug}", s.agentHandler.Delete)
 
 		// Search
 		r.Get("/search", s.searchHandler.Search)
