@@ -223,18 +223,17 @@ export default function ImportPage() {
           {tab === "github" && (
             <form onSubmit={handleGitHubSubmit} className="import-form">
               <div className="form-group">
-                <label htmlFor="gh-token">Personal access token</label>
+                <label htmlFor="gh-token">Personal access token (optional for public repos)</label>
                 <input
                   id="gh-token"
                   type="password"
                   value={ghToken}
                   onChange={(e) => setGhToken(e.target.value)}
                   placeholder="ghp_..."
-                  required
                   autoComplete="off"
                 />
                 <p className="form-hint">
-                  Requires <code>repo</code> scope for private repositories.{" "}
+                  Required for private repositories (<code>repo</code> scope).{" "}
                   <a
                     href="https://github.com/settings/tokens/new?scopes=repo"
                     target="_blank"
@@ -293,19 +292,18 @@ export default function ImportPage() {
           {tab === "gitlab" && (
             <form onSubmit={handleGitLabSubmit} className="import-form">
               <div className="form-group">
-                <label htmlFor="gl-token">Personal access token</label>
+                <label htmlFor="gl-token">Personal access token (optional for public repos)</label>
                 <input
                   id="gl-token"
                   type="password"
                   value={glToken}
                   onChange={(e) => setGlToken(e.target.value)}
                   placeholder="glpat-..."
-                  required
                   autoComplete="off"
                 />
                 <p className="form-hint">
-                  Requires <code>read_api</code> and <code>read_repository</code>{" "}
-                  scopes.
+                  Required for private repositories (<code>read_api</code> + <code>read_repository</code>{" "}
+                  scopes).
                 </p>
               </div>
               <div className="form-group">

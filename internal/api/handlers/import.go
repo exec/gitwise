@@ -33,10 +33,6 @@ func (h *ImportHandler) ImportGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(req.Token) == "" {
-		writeFieldError(w, http.StatusBadRequest, "required", "GitHub token is required", "token")
-		return
-	}
 	if strings.TrimSpace(req.RepoURL) == "" {
 		writeFieldError(w, http.StatusBadRequest, "required", "Repository URL is required", "repo_url")
 		return
@@ -72,10 +68,6 @@ func (h *ImportHandler) ImportGitLab(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(req.Token) == "" {
-		writeFieldError(w, http.StatusBadRequest, "required", "GitLab token is required", "token")
-		return
-	}
 	if strings.TrimSpace(req.ProjectURL) == "" {
 		writeFieldError(w, http.StatusBadRequest, "required", "Project URL is required", "project_url")
 		return
