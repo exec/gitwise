@@ -5236,17 +5236,10 @@ a.settings-tab-link {
 .chat-conversation-entry {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   width: 100%;
-  padding: 8px 16px;
-  background: none;
-  border: none;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
-  cursor: pointer;
-  text-align: left;
-  font-family: var(--font-sans);
-  font-size: 0.8125rem;
-  color: var(--text-primary);
   transition: background 0.1s;
 }
 
@@ -5270,11 +5263,56 @@ a.settings-tab-link {
   min-width: 0;
 }
 
+.chat-conversation-entry-main {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+  padding: 0;
+}
+
+.chat-conversation-active-badge {
+  font-size: 0.6875rem;
+  color: var(--success);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
 .chat-conversation-entry-date {
   color: var(--text-muted);
   font-size: 0.75rem;
   flex-shrink: 0;
-  margin-left: 8px;
+}
+
+.chat-conversation-delete-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0 4px;
+  flex-shrink: 0;
+  line-height: 1;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+
+.chat-conversation-delete-btn:hover {
+  color: var(--danger);
+}
+
+.chat-conversation-delete-btn.confirm {
+  color: var(--danger);
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
 /* Chat messages area */

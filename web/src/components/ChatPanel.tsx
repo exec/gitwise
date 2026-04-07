@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { get, post } from "../lib/api";
+import { get, post, del } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
 import Markdown from "./Markdown";
 
@@ -38,6 +38,7 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
   );
   const [messageInput, setMessageInput] = useState("");
   const [showConversationList, setShowConversationList] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -101,6 +102,28 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
       });
     },
   });
+
+  const deleteConversation = useMutation({
+    mutationFn: (convId: string) =>
+      del(`/repos/${owner}/${repo}/chat/${convId}`),
+    onSuccess: (_data, convId) => {
+      if (activeConversation === convId) {
+        setActiveConversation(null);
+      }
+      setConfirmDeleteId(null);
+      queryClient.invalidateQueries({
+        queryKey: ["chat-conversations", owner, repo],
+      });
+    },
+  });
+
+  const handleDeleteClick = (convId: string) => {
+    if (confirmDeleteId === convId) {
+      deleteConversation.mutate(convId);
+    } else {
+      setConfirmDeleteId(convId);
+    }
+  };
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -221,21 +244,36 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
                     </p>
                   )}
                 {conversationsQuery.data?.map((conv) => (
-                  <button
+                  <div
                     key={conv.id}
                     className={`chat-conversation-entry ${activeConversation === conv.id ? "active" : ""}`}
-                    onClick={() => {
-                      setActiveConversation(conv.id);
-                      setShowConversationList(false);
-                    }}
                   >
-                    <span className="chat-conversation-entry-title">
-                      {conv.title || "Untitled"}
-                    </span>
-                    <span className="chat-conversation-entry-date">
-                      {new Date(conv.updated_at).toLocaleDateString()}
-                    </span>
-                  </button>
+                    <button
+                      className="chat-conversation-entry-main"
+                      onClick={() => setActiveConversation(conv.id)}
+                    >
+                      <span className="chat-conversation-entry-title">
+                        {conv.title || "Untitled"}
+                      </span>
+                      {activeConversation === conv.id && (
+                        <span className="chat-conversation-active-badge">Active</span>
+                      )}
+                      <span className="chat-conversation-entry-date">
+                        {new Date(conv.updated_at).toLocaleDateString()}
+                      </span>
+                    </button>
+                    <button
+                      className={`chat-conversation-delete-btn ${confirmDeleteId === conv.id ? "confirm" : ""}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteClick(conv.id);
+                      }}
+                      onBlur={() => setConfirmDeleteId(null)}
+                      disabled={deleteConversation.isPending}
+                    >
+                      {confirmDeleteId === conv.id ? "Sure?" : "\u00d7"}
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
