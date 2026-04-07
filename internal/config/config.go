@@ -16,10 +16,24 @@ type Config struct {
 	Git         GitConfig
 	Frontend    FrontendConfig
 	Embedding   EmbeddingConfig
+	LLM         LLMConfig
 	Secret      string
 	BaseURL     string
 	GitHubOAuth GitHubOAuthConfig
 	TOTPKey     string // hex-encoded 32-byte AES-256 key for encrypting TOTP secrets at rest
+}
+
+type LLMConfig struct {
+	Provider           string // "anthropic", "ollama_cloud", "ollama_local", "none"
+	AnthropicKey       string
+	AnthropicModel     string // default "claude-sonnet-4-6"
+	AnthropicChatModel string // default same as AnthropicModel
+	OllamaCloudURL     string
+	OllamaLocalURL     string // default "http://localhost:11434"
+	OllamaGenModel     string // default "llama3"
+	QueueWorkers       int    // default 4
+	MaxContext         int    // default 100000
+	Enabled            bool   // global kill switch, default true
 }
 
 type GitHubOAuthConfig struct {
@@ -118,6 +132,7 @@ func Load() *Config {
 			OllamaURL:      envStr("GITWISE_OLLAMA_URL", "http://localhost:11434"),
 			OllamaModel:    envStr("GITWISE_OLLAMA_MODEL", "nomic-embed-text"),
 		},
+		LLM: loadLLMConfig(),
 	}
 }
 
@@ -144,4 +159,32 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		}
 	}
 	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	v := os.Getenv(key)
+	switch v {
+	case "true", "1", "yes":
+		return true
+	case "false", "0", "no":
+		return false
+	default:
+		return fallback
+	}
+}
+
+func loadLLMConfig() LLMConfig {
+	anthropicModel := envStr("GITWISE_ANTHROPIC_MODEL", "claude-sonnet-4-6")
+	return LLMConfig{
+		Provider:           envStr("GITWISE_LLM_PROVIDER", "none"),
+		AnthropicKey:       envStr("GITWISE_ANTHROPIC_API_KEY", ""),
+		AnthropicModel:     anthropicModel,
+		AnthropicChatModel: envStr("GITWISE_ANTHROPIC_CHAT_MODEL", anthropicModel),
+		OllamaCloudURL:     envStr("GITWISE_OLLAMA_CLOUD_URL", ""),
+		OllamaLocalURL:     envStr("GITWISE_OLLAMA_LOCAL_URL", "http://localhost:11434"),
+		OllamaGenModel:     envStr("GITWISE_OLLAMA_GEN_MODEL", "llama3"),
+		QueueWorkers:       envInt("GITWISE_AGENT_QUEUE_WORKERS", 4),
+		MaxContext:         envInt("GITWISE_AGENT_MAX_CONTEXT", 100000),
+		Enabled:            envBool("GITWISE_AGENT_ENABLED", true),
+	}
 }

@@ -65,6 +65,10 @@ func main() {
 	// Webhook retry loop
 	srv.WebhookService().StartRetryLoop()
 
+	// Agent queue workers
+	agentCtx, agentCancel := context.WithCancel(context.Background())
+	srv.LLMQueue().StartWorkers(agentCtx)
+
 	// Graceful shutdown
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
@@ -81,6 +85,8 @@ func main() {
 
 	embWorker.Stop()
 	srv.WebhookService().StopRetryLoop()
+	agentCancel()
+	srv.LLMQueue().StopWorkers()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()

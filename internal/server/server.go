@@ -31,6 +31,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/importer"
 	"github.com/gitwise-io/gitwise/internal/services/issue"
 	"github.com/gitwise-io/gitwise/internal/services/label"
+	"github.com/gitwise-io/gitwise/internal/services/llm"
 	"github.com/gitwise-io/gitwise/internal/services/milestone"
 	"github.com/gitwise-io/gitwise/internal/services/notification"
 	"github.com/gitwise-io/gitwise/internal/services/oauth"
@@ -77,6 +78,8 @@ type Server struct {
 	commitIndexer *commit.Indexer
 	totpSvc       *totpsvc.Service
 	importSvc     *importer.Service
+	llmGateway    *llm.Gateway
+	llmQueue      *llm.Queue
 
 	// WebSocket
 	wsHub *gitwisews.Hub
@@ -274,6 +277,43 @@ func (s *Server) initServices() {
 		}
 		return u.Username, true
 	})
+
+	// LLM Gateway
+	var llmProvider llm.Provider
+	if s.cfg.LLM.Enabled {
+		switch s.cfg.LLM.Provider {
+		case "anthropic":
+			if s.cfg.LLM.AnthropicKey != "" {
+				llmProvider = llm.NewAnthropicProvider(s.cfg.LLM.AnthropicKey, s.cfg.LLM.AnthropicModel)
+				slog.Info("llm provider enabled", "provider", "anthropic", "model", s.cfg.LLM.AnthropicModel)
+			} else {
+				slog.Warn("llm provider set to anthropic but GITWISE_ANTHROPIC_API_KEY is empty, falling back to disabled")
+			}
+		case "ollama_cloud":
+			if s.cfg.LLM.OllamaCloudURL != "" {
+				llmProvider = llm.NewOllamaCloudProvider(s.cfg.LLM.OllamaCloudURL, s.cfg.LLM.OllamaGenModel)
+				slog.Info("llm provider enabled", "provider", "ollama_cloud", "model", s.cfg.LLM.OllamaGenModel, "url", s.cfg.LLM.OllamaCloudURL)
+			} else {
+				slog.Warn("llm provider set to ollama_cloud but GITWISE_OLLAMA_CLOUD_URL is empty, falling back to disabled")
+			}
+		case "ollama_local":
+			llmProvider = llm.NewOllamaLocalProvider(s.cfg.LLM.OllamaLocalURL, s.cfg.LLM.OllamaGenModel)
+			slog.Info("llm provider enabled", "provider", "ollama_local", "model", s.cfg.LLM.OllamaGenModel, "url", s.cfg.LLM.OllamaLocalURL)
+		case "none", "":
+			// LLM disabled
+		default:
+			slog.Warn("unknown llm provider, falling back to disabled", "provider", s.cfg.LLM.Provider)
+		}
+	}
+	s.llmGateway = llm.NewGateway(llmProvider)
+	s.llmQueue = llm.NewQueue(s.rdb, s.db, s.llmGateway, s.cfg.LLM.QueueWorkers)
+
+	// Ensure bot user exists
+	if botID, err := llm.EnsureBotUser(context.Background(), s.db); err != nil {
+		slog.Error("failed to ensure bot user", "error", err)
+	} else {
+		slog.Info("bot user ready", "id", botID)
+	}
 
 	// Index commits after every push
 	s.gitHTTP.PostReceiveHook = func(owner, repoName string) {
@@ -640,6 +680,16 @@ func (s *Server) EmbeddingService() *embedding.Service {
 // WebhookService returns the webhook service for use by the retry worker.
 func (s *Server) WebhookService() *webhook.Service {
 	return s.webhookSvc
+}
+
+// LLMQueue returns the agent task queue for use by the main entrypoint.
+func (s *Server) LLMQueue() *llm.Queue {
+	return s.llmQueue
+}
+
+// LLMGateway returns the LLM gateway for use by handlers.
+func (s *Server) LLMGateway() *llm.Gateway {
+	return s.llmGateway
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
