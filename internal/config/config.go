@@ -29,6 +29,7 @@ type LLMConfig struct {
 	AnthropicModel     string // default "claude-sonnet-4-6"
 	AnthropicChatModel string // default same as AnthropicModel
 	OllamaCloudURL     string
+	OllamaCloudKey     string
 	OllamaLocalURL     string // default "http://localhost:11434"
 	OllamaGenModel     string // default "llama3"
 	QueueWorkers       int    // default 4
@@ -180,7 +181,8 @@ func loadLLMConfig() LLMConfig {
 		AnthropicKey:       envStr("GITWISE_ANTHROPIC_API_KEY", ""),
 		AnthropicModel:     anthropicModel,
 		AnthropicChatModel: envStr("GITWISE_ANTHROPIC_CHAT_MODEL", anthropicModel),
-		OllamaCloudURL:     envStr("GITWISE_OLLAMA_CLOUD_URL", ""),
+		OllamaCloudURL:     envStr("GITWISE_OLLAMA_CLOUD_URL", "https://ollama.com"),
+		OllamaCloudKey:     envStr("GITWISE_OLLAMA_CLOUD_KEY", ""),
 		OllamaLocalURL:     envStr("GITWISE_OLLAMA_LOCAL_URL", "http://localhost:11434"),
 		OllamaGenModel:     envStr("GITWISE_OLLAMA_GEN_MODEL", "llama3"),
 		QueueWorkers:       envInt("GITWISE_AGENT_QUEUE_WORKERS", 4),

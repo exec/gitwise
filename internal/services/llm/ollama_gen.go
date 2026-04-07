@@ -74,29 +74,31 @@ func (p *OllamaLocalProvider) Name() string          { return "ollama_local" }
 func (p *OllamaLocalProvider) SupportsParallel() bool { return false }
 
 func (p *OllamaLocalProvider) Generate(ctx context.Context, req GenerateRequest) (*GenerateResponse, error) {
-	return ollamaGenerate(ctx, p.httpClient, p.baseURL, p.model, req)
+	return ollamaGenerate(ctx, p.httpClient, p.baseURL, p.model, "", req)
 }
 
 func (p *OllamaLocalProvider) GenerateStream(ctx context.Context, req GenerateRequest) (<-chan StreamChunk, error) {
-	return ollamaGenerateStream(ctx, p.baseURL, p.model, req)
+	return ollamaGenerateStream(ctx, p.baseURL, p.model, "", req)
 }
 
 // OllamaCloudProvider connects to a remote Ollama cloud endpoint.
-// Supports parallel requests.
+// Supports parallel requests and API key authentication.
 type OllamaCloudProvider struct {
 	baseURL    string
 	model      string
+	apiKey     string
 	httpClient *http.Client
 }
 
 // NewOllamaCloudProvider creates a provider for a remote Ollama cloud endpoint.
-func NewOllamaCloudProvider(baseURL, model string) *OllamaCloudProvider {
+func NewOllamaCloudProvider(baseURL, model, apiKey string) *OllamaCloudProvider {
 	if model == "" {
 		model = defaultOllamaModel
 	}
 	return &OllamaCloudProvider{
 		baseURL: baseURL,
 		model:   model,
+		apiKey:  apiKey,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Minute,
 		},
@@ -107,11 +109,11 @@ func (p *OllamaCloudProvider) Name() string          { return "ollama_cloud" }
 func (p *OllamaCloudProvider) SupportsParallel() bool { return true }
 
 func (p *OllamaCloudProvider) Generate(ctx context.Context, req GenerateRequest) (*GenerateResponse, error) {
-	return ollamaGenerate(ctx, p.httpClient, p.baseURL, p.model, req)
+	return ollamaGenerate(ctx, p.httpClient, p.baseURL, p.model, p.apiKey, req)
 }
 
 func (p *OllamaCloudProvider) GenerateStream(ctx context.Context, req GenerateRequest) (<-chan StreamChunk, error) {
-	return ollamaGenerateStream(ctx, p.baseURL, p.model, req)
+	return ollamaGenerateStream(ctx, p.baseURL, p.model, p.apiKey, req)
 }
 
 // ollamaBuildMessages converts a GenerateRequest into Ollama chat messages.
@@ -142,7 +144,7 @@ func ollamaBuildOptions(req GenerateRequest) *ollamaChatOptions {
 }
 
 // ollamaGenerate is the shared non-streaming implementation.
-func ollamaGenerate(ctx context.Context, client *http.Client, baseURL, model string, req GenerateRequest) (*GenerateResponse, error) {
+func ollamaGenerate(ctx context.Context, client *http.Client, baseURL, model, apiKey string, req GenerateRequest) (*GenerateResponse, error) {
 	apiReq := ollamaChatRequest{
 		Model:    model,
 		Messages: ollamaBuildMessages(req),
@@ -161,6 +163,9 @@ func ollamaGenerate(ctx context.Context, client *http.Client, baseURL, model str
 		return nil, fmt.Errorf("create ollama request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
@@ -195,7 +200,7 @@ func ollamaGenerate(ctx context.Context, client *http.Client, baseURL, model str
 
 // ollamaGenerateStream is the shared streaming implementation.
 // Ollama streams JSON objects, one per line (not SSE).
-func ollamaGenerateStream(ctx context.Context, baseURL, model string, req GenerateRequest) (<-chan StreamChunk, error) {
+func ollamaGenerateStream(ctx context.Context, baseURL, model, apiKey string, req GenerateRequest) (<-chan StreamChunk, error) {
 	apiReq := ollamaChatRequest{
 		Model:    model,
 		Messages: ollamaBuildMessages(req),
@@ -214,6 +219,9 @@ func ollamaGenerateStream(ctx context.Context, baseURL, model string, req Genera
 		return nil, fmt.Errorf("create ollama request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 
 	// No timeout for streaming — context handles cancellation.
 	streamClient := &http.Client{}

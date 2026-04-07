@@ -307,7 +307,7 @@ func (s *Server) initServices() {
 			}
 		case "ollama_cloud":
 			if s.cfg.LLM.OllamaCloudURL != "" {
-				llmProvider = llm.NewOllamaCloudProvider(s.cfg.LLM.OllamaCloudURL, s.cfg.LLM.OllamaGenModel)
+				llmProvider = llm.NewOllamaCloudProvider(s.cfg.LLM.OllamaCloudURL, s.cfg.LLM.OllamaGenModel, s.cfg.LLM.OllamaCloudKey)
 				slog.Info("llm provider enabled", "provider", "ollama_cloud", "model", s.cfg.LLM.OllamaGenModel, "url", s.cfg.LLM.OllamaCloudURL)
 			} else {
 				slog.Warn("llm provider set to ollama_cloud but GITWISE_OLLAMA_CLOUD_URL is empty, falling back to disabled")
