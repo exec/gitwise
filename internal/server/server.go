@@ -24,6 +24,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/config"
 	"github.com/gitwise-io/gitwise/internal/git"
 	"github.com/gitwise-io/gitwise/internal/middleware"
+	"github.com/gitwise-io/gitwise/internal/models"
 	"github.com/gitwise-io/gitwise/internal/services/activity"
 	agentsvc "github.com/gitwise-io/gitwise/internal/services/agent"
 	"github.com/gitwise-io/gitwise/internal/services/chat"
@@ -275,8 +276,14 @@ func (s *Server) initServices() {
 
 	// Chat service + context builder + handler
 	s.chatSvc = chat.NewService(s.db)
+	if s.llmGateway != nil && s.llmGateway.IsEnabled() {
+		s.chatSvc.SetLLMGenerator(&llmChatAdapter{gw: s.llmGateway})
+	}
 	s.ctxBuilder = chat.NewContextBuilder(s.db, s.agentSvc)
 	s.chatHandler = handlers.NewChatHandler(s.repoSvc, s.chatSvc, s.ctxBuilder)
+
+	// Seed official Gitwise Agent if it doesn't exist
+	s.seedOfficialAgent()
 
 	// Admin handler (after commitIndexer is initialized)
 	s.adminHandler = handlers.NewAdminHandler(s.db, s.userSvc, s.commitIndexer)
@@ -820,6 +827,49 @@ func handleNotImplemented(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotImplemented)
 	fmt.Fprintf(w, `{"errors":[{"code":"not_implemented","message":"this endpoint is not yet implemented"}]}`)
+}
+
+// llmChatAdapter adapts the LLM Gateway to the chat.LLMGenerator interface.
+type llmChatAdapter struct {
+	gw *llm.Gateway
+}
+
+func (a *llmChatAdapter) Generate(ctx context.Context, systemPrompt string, messages []models.LLMMessage, maxTokens int) (string, error) {
+	llmMsgs := make([]llm.Message, len(messages))
+	for i, m := range messages {
+		llmMsgs[i] = llm.Message{Role: m.Role, Content: m.Content}
+	}
+	resp, err := a.gw.Generate(ctx, llm.GenerateRequest{
+		SystemPrompt: systemPrompt,
+		Messages:     llmMsgs,
+		MaxTokens:    maxTokens,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
+// seedOfficialAgent creates the "Gitwise Agent" in the agents table if it doesn't exist.
+func (s *Server) seedOfficialAgent() {
+	var exists bool
+	_ = s.db.QueryRow(context.Background(), `SELECT EXISTS(SELECT 1 FROM agents WHERE slug = 'gitwise-agent')`).Scan(&exists)
+	if exists {
+		return
+	}
+
+	_, err := s.db.Exec(context.Background(), `
+		INSERT INTO agents (id, name, slug, description, is_official, config, created_at, updated_at)
+		VALUES (uuid_generate_v4(), 'Gitwise Agent', 'gitwise-agent',
+			'Official AI agent — reviews code, generates documentation, and opens issues for problems it finds.',
+			true, '{"review_on_push": true, "open_issues": true, "open_prs": false, "auto_update_docs": true}',
+			now(), now())
+		ON CONFLICT DO NOTHING`)
+	if err != nil {
+		slog.Warn("failed to seed official agent", "error", err)
+	} else {
+		slog.Info("seeded official Gitwise Agent")
+	}
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
