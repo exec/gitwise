@@ -181,8 +181,12 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
           } else if (eventType === "chunk" && data) {
             const chunk = JSON.parse(data) as { content: string };
             setStreamingContent((prev) => prev + chunk.content);
-          } else if (eventType === "tool_call") {
-            setStreamingContent((prev) => prev + "\n\n*Reading files...*\n\n");
+          } else if (eventType === "tool_call" && data) {
+            const tc = JSON.parse(data) as { files?: string[] };
+            const names = tc.files?.join(", ") || "files";
+            setStreamingContent((prev) => prev + `\n\n*Reading ${names}...*\n\n`);
+          } else if (eventType === "clear_stream") {
+            setStreamingContent("");
           } else if (eventType === "assistant_message") {
             // Final saved message — we clear streaming content; the
             // invalidation below will fetch it from the DB.

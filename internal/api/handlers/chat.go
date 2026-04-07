@@ -287,8 +287,10 @@ When referencing code, always mention the file path. Be concise and helpful.`, r
 
 			slog.Debug("chat tool call: read_file", "files", files, "iteration", i+1)
 
-			// Notify frontend about tool call
+			// Notify frontend about tool call with filenames, and signal to replace streamed content
 			sseWrite(w, flusher, "tool_call", map[string]any{"files": files})
+			// Tell frontend to clear the partial response that contained <read_file> tags
+			sseWrite(w, flusher, "clear_stream", map[string]string{})
 
 			var fileContents strings.Builder
 			for _, path := range files {
