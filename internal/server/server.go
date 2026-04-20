@@ -494,6 +494,11 @@ func (s *Server) setupRoutes() {
 			r.Get("/", s.repoHandler.List)
 			r.With(middleware.RequireAuth).Post("/", s.repoHandler.Create)
 
+			// Create a repo that is immediately configured as a GitHub pull mirror.
+			if s.mirrorHandler != nil {
+				r.With(middleware.RequireAuth).Post("/mirror-create", s.mirrorHandler.Create)
+			}
+
 			r.Route("/{owner}/{repo}", func(r chi.Router) {
 				r.Get("/", s.repoHandler.Get)
 				r.With(middleware.RequireAuth).Patch("/", s.repoHandler.Update)

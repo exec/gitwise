@@ -5,8 +5,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/gitwise-io/gitwise/internal/middleware"
 	"github.com/gitwise-io/gitwise/internal/models"
 	"github.com/gitwise-io/gitwise/internal/services/mirror"
 	"github.com/gitwise-io/gitwise/internal/services/repo"
@@ -124,4 +126,87 @@ func (h *MirrorHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
+}
+
+// MirrorCreateRequest is the body for POST /api/repos/mirror-create.
+type MirrorCreateRequest struct {
+	Name            string `json:"name"`
+	Description     string `json:"description,omitempty"`
+	Visibility      string `json:"visibility,omitempty"` // "public" or "private"
+	GithubSlug      string `json:"github_slug"`          // "owner/repo"
+	PAT             string `json:"pat,omitempty"`
+	IntervalSeconds int    `json:"interval_seconds"`
+}
+
+// Create handles POST /api/repos/mirror-create.
+// It creates an empty Gitwise repo, configures it as a pull mirror, runs the
+// initial clone synchronously, and returns the new repo's owner+name so the
+// client can redirect. On any failure after the repo row is written it rolls
+// back by deleting the repo.
+func (h *MirrorHandler) Create(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	if userID == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+
+	var req MirrorCreateRequest
+	if handleDecodeError(w, decodeJSON(r, &req)) {
+		return
+	}
+
+	parts := strings.SplitN(req.GithubSlug, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "github_slug must be owner/repo")
+		return
+	}
+
+	// 1. Create empty Gitwise repo.
+	repository, err := h.repos.Create(r.Context(), *userID, models.CreateRepoRequest{
+		Name:        req.Name,
+		Description: req.Description,
+		Visibility:  req.Visibility,
+	})
+	if errors.Is(err, repo.ErrInvalidName) {
+		writeError(w, http.StatusBadRequest, "invalid_name", "repository name must be 2–100 alphanumeric characters")
+		return
+	}
+	if errors.Is(err, repo.ErrDuplicate) {
+		writeError(w, http.StatusConflict, "duplicate", "repository already exists")
+		return
+	}
+	if err != nil {
+		slog.Error("mirror create: repo create failed", "error", err)
+		writeError(w, http.StatusBadRequest, "repo_create_failed", "failed to create repo")
+		return
+	}
+
+	// 2. Configure pull mirror.
+	if _, err := h.mirrors.Configure(r.Context(), repository.ID, models.ConfigureMirrorRequest{
+		Direction:       models.MirrorPull,
+		GithubOwner:     parts[0],
+		GithubRepo:      parts[1],
+		PAT:             req.PAT,
+		IntervalSeconds: req.IntervalSeconds,
+		AutoPush:        false,
+	}); err != nil {
+		_ = h.repos.Delete(r.Context(), repository.OwnerName, repository.Name, repository.ID)
+		slog.Error("mirror create: configure failed", "repo_id", repository.ID, "error", err)
+		writeError(w, http.StatusBadRequest, "mirror_configure_failed", err.Error())
+		return
+	}
+
+	// 3. Initial clone (synchronous — client shows spinner until this returns).
+	if err := h.mirrors.InitialClone(r.Context(), repository.ID); err != nil {
+		_ = h.repos.Delete(r.Context(), repository.OwnerName, repository.Name, repository.ID)
+		slog.Error("mirror create: initial clone failed", "repo_id", repository.ID, "error", err)
+		writeError(w, http.StatusBadRequest, "clone_failed", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":    repository.ID.String(),
+		"owner": repository.OwnerName,
+		"name":  repository.Name,
+	})
 }
