@@ -27,7 +27,10 @@ type SSHServer struct {
 	authFn func(key gossh.PublicKey) (string, bool)
 	// accessCheck verifies repo-level authorization for the authenticated user.
 	accessCheck SSHAccessChecker
-	server      *gossh.Server
+	// IsPullMirror returns true when the repo is the destination of a pull mirror,
+	// so receive-pack should be rejected. nil = never reject (backwards compatible).
+	IsPullMirror func(owner, repoName string) bool
+	server       *gossh.Server
 }
 
 func NewSSHServer(gitSvc *Service, addr, hostKeyPath string, authFn func(gossh.PublicKey) (string, bool), accessCheck SSHAccessChecker) *SSHServer {
@@ -129,6 +132,12 @@ func (s *SSHServer) handleSession(sess gossh.Session) {
 	}
 
 	repoPath := s.git.RepoPath(owner, repoName)
+
+	if service == "git-receive-pack" && s.IsPullMirror != nil && s.IsPullMirror(owner, repoName) {
+		fmt.Fprintln(sess.Stderr(), "error: this repo is mirrored from GitHub (read-only on Gitwise). Push to GitHub to update.")
+		sess.Exit(1)
+		return
+	}
 
 	cmd := exec.Command("git", service[4:], repoPath) // strip "git-" prefix
 	cmd.Stdin = sess

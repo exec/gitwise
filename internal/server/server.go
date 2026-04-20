@@ -397,6 +397,31 @@ func (s *Server) initServices() {
 			}(repoID)
 		}
 	}
+
+	// Gate git pushes when the repo is a pull-mirror destination (read-only on Gitwise).
+	isPullMirror := func(owner, repoName string) bool {
+		if s.mirrorSvc == nil {
+			return false
+		}
+		var isPull bool
+		err := s.db.QueryRow(context.Background(), `
+			SELECT EXISTS(
+				SELECT 1 FROM repo_mirrors rm
+				JOIN repositories r ON r.id = rm.repo_id
+				LEFT JOIN users u         ON r.owner_id = u.id AND r.owner_type = 'user'
+				LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
+				WHERE LOWER(COALESCE(u.username, o.name)) = $1
+				  AND r.name = $2
+				  AND rm.direction = 'pull'
+			)`, owner, repoName).Scan(&isPull)
+		if err != nil {
+			slog.Error("pull-mirror check failed", "owner", owner, "repo", repoName, "error", err)
+			return false // fail open — don't brick pushes on DB errors
+		}
+		return isPull
+	}
+	s.gitHTTP.IsPullMirror = isPullMirror
+	s.gitSSH.IsPullMirror = isPullMirror
 }
 
 func (s *Server) setupMiddleware() {

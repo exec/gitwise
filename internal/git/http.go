@@ -20,6 +20,9 @@ type HTTPHandler struct {
 	// PostReceiveHook is called asynchronously after a successful git push.
 	// Parameters: owner, repoName.
 	PostReceiveHook func(owner, repoName string)
+	// IsPullMirror returns true when the repo is the destination of a pull mirror,
+	// so receive-pack should be rejected. nil = never reject (backwards compatible).
+	IsPullMirror func(owner, repoName string) bool
 }
 
 func NewHTTPHandler(git *Service, authFn func(string, string) (string, bool)) *HTTPHandler {
@@ -109,6 +112,13 @@ func (h *HTTPHandler) handleReceivePack(w http.ResponseWriter, r *http.Request, 
 	// Extract repo name from path for the post-receive hook
 	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 3)
 	repoName := strings.TrimSuffix(parts[1], ".git")
+
+	if h.IsPullMirror != nil && h.IsPullMirror(owner, repoName) {
+		http.Error(w,
+			"this repo is mirrored from GitHub (read-only on Gitwise). Push to GitHub to update.",
+			http.StatusForbidden)
+		return
+	}
 
 	h.serveGitCommand(w, r, "receive-pack", repoPath)
 
