@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useParams, useLocation, Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { get } from "../lib/api";
-import RepoHeader from "../components/RepoHeader";
+import RepoHeader, { type MirrorState } from "../components/RepoHeader";
 import CodeView from "../components/CodeView";
 import BlameView from "../components/BlameView";
 import type { BlameLineData } from "../components/BlameView";
@@ -141,6 +141,18 @@ export default function RepoPage() {
     enabled: !!owner && !!repo && repoLoaded && tab === "commits",
   });
 
+  const mirrorQuery = useQuery({
+    queryKey: ["mirror", owner, repo],
+    queryFn: () =>
+      get<{ mirror: MirrorState | null }>(`/repos/${owner}/${repo}/mirror`).then(
+        (r) => r.data.mirror,
+      ),
+    enabled: !!owner && !!repo,
+    refetchInterval: (query) =>
+      query.state.data?.last_status === "running" ? 2000 : false,
+  });
+  const mirror = mirrorQuery.data ?? null;
+
   const readmeEntry = treeQuery.data ? findReadme(treeQuery.data) : undefined;
   const readmePath = readmeEntry
     ? treePath
@@ -187,7 +199,36 @@ export default function RepoPage() {
         owner={owner!}
         repo={repo!}
         activeTab={tab === "commits" ? "commits" : "code"}
+        mirror={mirror}
       />
+
+      {mirror && mirror.direction === "pull" && mirror.last_status === "success" && (
+        <div
+          role="note"
+          style={{
+            background: "#fffbeb",
+            border: "1px solid #f59e0b",
+            borderRadius: "6px",
+            padding: "0.6rem 1rem",
+            margin: "0.75rem 0",
+            fontSize: "0.875rem",
+            color: "#92400e",
+          }}
+        >
+          <span>
+            ⟲ Mirrored from{" "}
+            <a
+              href={`https://github.com/${mirror.github_owner}/${mirror.github_repo}`}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: "#92400e", fontWeight: 600 }}
+            >
+              github.com/{mirror.github_owner}/{mirror.github_repo}
+            </a>
+            {" — push access disabled here. Push to GitHub to update."}
+          </span>
+        </div>
+      )}
 
       {tab === "code" && isEmptyRepo && (
         <SetupInstructions owner={owner!} repo={repo!} />

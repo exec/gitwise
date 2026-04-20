@@ -2,6 +2,16 @@ import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { get, put, del } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
+import { MirrorStatusDot, type MirrorStatus, type MirrorDirection } from "./MirrorStatusDot";
+
+export interface MirrorState {
+  direction: MirrorDirection;
+  github_owner: string;
+  github_repo: string;
+  last_status: MirrorStatus;
+  last_error?: string;
+  last_synced_at?: string | null;
+}
 
 interface Repo {
   owner_name: string;
@@ -19,9 +29,10 @@ interface RepoHeaderProps {
   owner: string;
   repo: string;
   activeTab: "code" | "issues" | "pulls" | "commits" | "agents" | "settings";
+  mirror?: MirrorState | null;
 }
 
-export default function RepoHeader({ owner, repo, activeTab }: RepoHeaderProps) {
+export default function RepoHeader({ owner, repo, activeTab, mirror }: RepoHeaderProps) {
   const currentUser = useAuthStore((s) => s.user);
   const isOwner = currentUser?.username === owner;
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -81,6 +92,16 @@ export default function RepoHeader({ owner, repo, activeTab }: RepoHeaderProps) 
             </Link>
             {" / "}
             <Link to={`/${owner}/${repo}`}>{repoData?.name ?? repo}</Link>
+            {mirror && (
+              <span style={{ marginLeft: "0.5rem", verticalAlign: "middle" }}>
+                <MirrorStatusDot
+                  status={mirror.last_status}
+                  direction={mirror.direction}
+                  lastSyncedAt={mirror.last_synced_at}
+                  lastError={mirror.last_error}
+                />
+              </span>
+            )}
           </h1>
           {repoData && (
             <span className={`badge badge-${repoData.visibility}`}>
