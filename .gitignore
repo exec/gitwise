@@ -38,3 +38,12 @@ docker-compose.override.yml
 # Tmp
 tmp/
 *.log
+
+# Worktrees
+.worktrees/
+
+# Terraform
+terraform/proxmox/*.tfvars
+terraform/proxmox/.terraform/
+terraform/proxmox/terraform.tfstate
+terraform/proxmox/terraform.tfstate.backup
