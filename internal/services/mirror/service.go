@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -377,16 +378,22 @@ func (s *Service) RunDue(ctx context.Context) []SyncResult {
 		  AND (next_run_at IS NULL OR next_run_at <= now())
 		LIMIT 50`)
 	if err != nil {
+		slog.Error("mirror: RunDue query failed", "error", err)
 		return nil
 	}
 	var ids []uuid.UUID
 	for rows.Next() {
 		var id uuid.UUID
-		if err := rows.Scan(&id); err == nil {
-			ids = append(ids, id)
+		if err := rows.Scan(&id); err != nil {
+			slog.Warn("mirror: RunDue scan failed", "error", err)
+			continue
 		}
+		ids = append(ids, id)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		slog.Warn("mirror: RunDue iterate failed", "error", err)
+	}
 
 	if len(ids) == 0 {
 		return nil
@@ -399,7 +406,11 @@ func (s *Service) RunDue(ctx context.Context) []SyncResult {
 		go func(id uuid.UUID) {
 			defer wg.Done()
 			r, err := s.SyncNow(ctx, id, models.MirrorTriggerScheduled)
-			if err == nil && r != nil {
+			switch {
+			case err != nil:
+				// Surface failures in the aggregate result so the worker can log them.
+				resultsCh <- SyncResult{Status: models.MirrorFailed, Error: err.Error()}
+			case r != nil:
 				resultsCh <- *r
 			}
 		}(id)
@@ -417,7 +428,10 @@ func (s *Service) RunDue(ctx context.Context) []SyncResult {
 // ReapStuck marks any run that has been 'running' longer than
 // max(interval_seconds, 600s) * 3 as failed, and flips the corresponding
 // mirror's last_status back to 'failed' so the scheduler picks it up again.
-// Returns the number of runs reaped.
+// next_run_at is intentionally not advanced — the sync will re-run on the
+// next tick since next_run_at was already in the past when the stuck run
+// began. Returns the number of mirrors reset (not runs reaped; these match
+// in normal operation since one run-per-repo is in flight at a time).
 func (s *Service) ReapStuck(ctx context.Context) (int, error) {
 	tag, err := s.db.Exec(ctx, `
 		WITH stuck AS (
