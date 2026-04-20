@@ -3,8 +3,10 @@ package workers
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
+	"github.com/gitwise-io/gitwise/internal/models"
 	"github.com/gitwise-io/gitwise/internal/services/mirror"
 )
 
@@ -13,6 +15,7 @@ type MirrorWorker struct {
 	svc      *mirror.Service
 	interval time.Duration
 	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // NewMirrorWorker creates a worker that syncs mirrors at the given interval.
@@ -45,11 +48,12 @@ func (w *MirrorWorker) Start() {
 	}()
 }
 
-// Stop signals the worker to shut down.
-func (w *MirrorWorker) Stop() { close(w.stopCh) }
+// Stop signals the worker to shut down. Safe to call multiple times.
+func (w *MirrorWorker) Stop() { w.stopOnce.Do(func() { close(w.stopCh) }) }
 
 func (w *MirrorWorker) tick() {
 	// Bound each tick so a wedged DB doesn't block the next one indefinitely.
+	// RunDue blocks on its own WaitGroup, so ticks cannot overlap; no mutex needed.
 	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
 	defer cancel()
 
@@ -60,12 +64,22 @@ func (w *MirrorWorker) tick() {
 	}
 
 	for _, r := range w.svc.RunDue(ctx) {
-		slog.Info("mirror sync",
+		attrs := []any{
+			"repo_id", r.RepoID,
 			"run_id", r.RunID,
 			"status", r.Status,
 			"refs_changed", r.RefsChanged,
 			"duration_ms", r.Duration.Milliseconds(),
-			"error", r.Error,
-		)
+			"trigger", "scheduled",
+		}
+		switch {
+		case r.Status == models.MirrorFailed:
+			slog.Warn("mirror sync failed", append(attrs, "error", r.Error)...)
+		case r.RefsChanged > 0:
+			slog.Info("mirror sync", attrs...)
+		default:
+			// No-op sync (up to date). Keep debug-level so idle instances stay quiet.
+			slog.Debug("mirror sync (no-op)", attrs...)
+		}
 	}
 }

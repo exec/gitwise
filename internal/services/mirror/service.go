@@ -212,6 +212,7 @@ func nowUTC() time.Time { return time.Now().UTC() }
 // SyncResult captures the outcome of a single sync, as persisted in repo_mirror_runs
 // and returned to API callers (manual sync, admin page).
 type SyncResult struct {
+	RepoID      uuid.UUID
 	RunID       uuid.UUID
 	Status      models.MirrorStatus
 	RefsChanged int
@@ -360,6 +361,7 @@ func (s *Service) finishRun(
 		  )`, repoID)
 
 	return &SyncResult{
+		RepoID:      repoID,
 		RunID:       runID,
 		Status:      status,
 		RefsChanged: refsChanged,
@@ -410,7 +412,7 @@ func (s *Service) RunDue(ctx context.Context) []SyncResult {
 			switch {
 			case err != nil:
 				// Surface failures in the aggregate result so the worker can log them.
-				resultsCh <- SyncResult{Status: models.MirrorFailed, Error: err.Error()}
+				resultsCh <- SyncResult{RepoID: id, Status: models.MirrorFailed, Error: err.Error()}
 			case r != nil:
 				resultsCh <- *r
 			}
