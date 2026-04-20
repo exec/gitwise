@@ -114,6 +114,8 @@ func (h *HTTPHandler) handleReceivePack(w http.ResponseWriter, r *http.Request, 
 	repoName := strings.TrimSuffix(parts[1], ".git")
 
 	if h.IsPullMirror != nil && h.IsPullMirror(owner, repoName) {
+		slog.Warn("rejected git push to pull-mirror destination",
+			"transport", "http", "owner", owner, "repo", repoName)
 		http.Error(w,
 			"this repo is mirrored from GitHub (read-only on Gitwise). Push to GitHub to update.",
 			http.StatusForbidden)

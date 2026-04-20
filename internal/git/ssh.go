@@ -134,7 +134,9 @@ func (s *SSHServer) handleSession(sess gossh.Session) {
 	repoPath := s.git.RepoPath(owner, repoName)
 
 	if service == "git-receive-pack" && s.IsPullMirror != nil && s.IsPullMirror(owner, repoName) {
-		fmt.Fprintln(sess.Stderr(), "error: this repo is mirrored from GitHub (read-only on Gitwise). Push to GitHub to update.")
+		slog.Warn("rejected git push to pull-mirror destination",
+			"transport", "ssh", "owner", owner, "repo", repoName, "user", username)
+		fmt.Fprintln(sess.Stderr(), "this repo is mirrored from GitHub (read-only on Gitwise). Push to GitHub to update.")
 		sess.Exit(1)
 		return
 	}
