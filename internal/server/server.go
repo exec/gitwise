@@ -48,7 +48,9 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/team"
 	totpsvc "github.com/gitwise-io/gitwise/internal/services/totp"
 	"github.com/gitwise-io/gitwise/internal/services/user"
+	"github.com/gitwise-io/gitwise/internal/services/mirror"
 	"github.com/gitwise-io/gitwise/internal/services/webhook"
+	"github.com/gitwise-io/gitwise/internal/workers"
 	gitwisews "github.com/gitwise-io/gitwise/internal/websocket"
 )
 
@@ -76,6 +78,7 @@ type Server struct {
 	orgSvc        *org.Service
 	teamSvc       *team.Service
 	webhookSvc    *webhook.Service
+	mirrorSvc     *mirror.Service
 	sshkeySvc     *sshkey.Service
 	embeddingSvc  *embedding.Service
 	commitIndexer *commit.Indexer
@@ -86,6 +89,7 @@ type Server struct {
 	agentSvc      *agentsvc.Service
 	chatSvc       *chat.Service
 	ctxBuilder    *chat.ContextBuilder
+	mirrorWorker  *workers.MirrorWorker
 
 	// WebSocket
 	wsHub *gitwisews.Hub
@@ -178,6 +182,19 @@ func (s *Server) initServices() {
 
 	// Webhook service (before handlers that depend on it)
 	s.webhookSvc = webhook.NewService(s.db)
+
+	// Mirror service + worker
+	mirrorCrypto, err := mirror.NewCrypto(s.cfg.Secret)
+	if err != nil {
+		slog.Error("failed to initialize mirror crypto", "error", err)
+	} else {
+		reposPath := s.cfg.Git.ReposPath
+		if reposPath == "" {
+			reposPath = os.Getenv("GITWISE_REPOS_PATH")
+		}
+		s.mirrorSvc = mirror.NewService(s.db, mirrorCrypto, mirror.NewRemote(), reposPath)
+		s.mirrorWorker = workers.NewMirrorWorker(s.mirrorSvc, 60*time.Second)
+	}
 
 	// OAuth service (nil if not configured)
 	var oauthSvc *oauth.Service
@@ -355,6 +372,23 @@ func (s *Server) initServices() {
 		}
 		if _, err := s.commitIndexer.IndexRepo(context.Background(), repoID, owner, repoName); err != nil {
 			slog.Error("post-receive: commit indexing failed", "owner", owner, "repo", repoName, "error", err)
+		}
+
+		// Auto-push if this repo has a push-direction mirror with auto_push enabled.
+		if s.mirrorSvc != nil {
+			go func(id uuid.UUID) {
+				ctx := context.Background()
+				m, err := s.mirrorSvc.Get(ctx, id)
+				if err != nil {
+					return // not configured — ignore silently
+				}
+				if m.Direction != models.MirrorPush || !m.AutoPush {
+					return
+				}
+				if _, err := s.mirrorSvc.SyncNow(ctx, id, models.MirrorTriggerPushEvent); err != nil {
+					slog.Error("mirror auto-push failed", "repo_id", id, "error", err)
+				}
+			}(repoID)
 		}
 	}
 }
@@ -650,6 +684,12 @@ func (s *Server) Start() error {
 		}
 	}()
 
+	// Start mirror worker
+	if s.mirrorWorker != nil {
+		s.mirrorWorker.Start()
+		slog.Info("mirror worker started")
+	}
+
 	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 	s.http = &http.Server{
 		Addr:              addr,
@@ -663,6 +703,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.mirrorWorker != nil {
+		s.mirrorWorker.Stop()
+	}
 	if s.gitSSH != nil {
 		if err := s.gitSSH.Shutdown(); err != nil {
 			slog.Error("SSH server shutdown error", "error", err)
