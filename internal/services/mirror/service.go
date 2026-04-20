@@ -365,3 +365,83 @@ func (s *Service) finishRun(
 		Error:       errMsg,
 	}, nil
 }
+
+// RunDue dispatches all mirrors whose next_run_at has passed, up to 50 per call.
+// Each mirror is synced concurrently; per-repo mutex in SyncNow keeps same-repo
+// calls serialized. The call blocks until every dispatched sync has finished.
+func (s *Service) RunDue(ctx context.Context) []SyncResult {
+	rows, err := s.db.Query(ctx, `
+		SELECT repo_id FROM repo_mirrors
+		WHERE interval_seconds > 0
+		  AND last_status <> 'running'
+		  AND (next_run_at IS NULL OR next_run_at <= now())
+		LIMIT 50`)
+	if err != nil {
+		return nil
+	}
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+
+	if len(ids) == 0 {
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	resultsCh := make(chan SyncResult, len(ids))
+	for _, id := range ids {
+		wg.Add(1)
+		go func(id uuid.UUID) {
+			defer wg.Done()
+			r, err := s.SyncNow(ctx, id, models.MirrorTriggerScheduled)
+			if err == nil && r != nil {
+				resultsCh <- *r
+			}
+		}(id)
+	}
+	wg.Wait()
+	close(resultsCh)
+
+	results := make([]SyncResult, 0, len(ids))
+	for r := range resultsCh {
+		results = append(results, r)
+	}
+	return results
+}
+
+// ReapStuck marks any run that has been 'running' longer than
+// max(interval_seconds, 600s) * 3 as failed, and flips the corresponding
+// mirror's last_status back to 'failed' so the scheduler picks it up again.
+// Returns the number of runs reaped.
+func (s *Service) ReapStuck(ctx context.Context) (int, error) {
+	tag, err := s.db.Exec(ctx, `
+		WITH stuck AS (
+		    SELECT mr.id, mr.repo_id
+		    FROM repo_mirror_runs mr
+		    JOIN repo_mirrors rm ON rm.repo_id = mr.repo_id
+		    WHERE mr.status = 'running'
+		      AND mr.started_at < now() - (GREATEST(rm.interval_seconds, 600) * 3 || ' seconds')::interval
+		), upd_runs AS (
+		    UPDATE repo_mirror_runs SET
+		        status      = 'failed',
+		        error       = 'abandoned (process may have crashed)',
+		        finished_at = now()
+		    FROM stuck
+		    WHERE repo_mirror_runs.id = stuck.id
+		    RETURNING repo_mirror_runs.repo_id
+		)
+		UPDATE repo_mirrors SET
+		    last_status = 'failed',
+		    last_error  = 'abandoned (process may have crashed)',
+		    updated_at  = now()
+		WHERE repo_id IN (SELECT repo_id FROM upd_runs)`)
+	if err != nil {
+		return 0, fmt.Errorf("mirror: reap stuck: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
