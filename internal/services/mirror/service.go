@@ -206,3 +206,140 @@ func (s *Service) repoPath(repoID uuid.UUID) string {
 
 // nowUTC is used by later tasks for deterministic timestamping.
 func nowUTC() time.Time { return time.Now().UTC() }
+
+// SyncResult captures the outcome of a single sync, as persisted in repo_mirror_runs
+// and returned to API callers (manual sync, admin page).
+type SyncResult struct {
+	RunID       uuid.UUID
+	Status      models.MirrorStatus
+	RefsChanged int
+	Duration    time.Duration
+	Error       string
+}
+
+// SyncNow runs a single sync for the given repo, blocking until done.
+// Grabs the per-repo mutex so concurrent SyncNow/RunDue calls on the same
+// repo queue sequentially.
+func (s *Service) SyncNow(ctx context.Context, repoID uuid.UUID, trigger models.MirrorTrigger) (*SyncResult, error) {
+	lock := s.lockFor(repoID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	m, err := s.Get(ctx, repoID)
+	if err != nil {
+		return nil, err
+	}
+
+	runID, err := s.startRun(ctx, repoID, trigger)
+	if err != nil {
+		return nil, fmt.Errorf("mirror: start run: %w", err)
+	}
+	start := nowUTC()
+
+	// Load encrypted PAT directly to avoid a round-trip through Get.
+	var ciphertext, nonce []byte
+	if err := s.db.QueryRow(ctx,
+		`SELECT pat_ciphertext, pat_nonce FROM repo_mirrors WHERE repo_id = $1`, repoID,
+	).Scan(&ciphertext, &nonce); err != nil {
+		return s.finishRun(ctx, runID, repoID, 0, models.MirrorFailed, fmt.Sprintf("mirror: load pat: %v", err), start)
+	}
+	pat, err := s.decryptPAT(ciphertext, nonce)
+	if err != nil {
+		return s.finishRun(ctx, runID, repoID, 0, models.MirrorFailed, err.Error(), start)
+	}
+
+	remoteURL := fmt.Sprintf("https://github.com/%s/%s.git", m.GithubOwner, m.GithubRepo)
+	localPath := s.repoPath(repoID)
+
+	var outcome SyncOutcome
+	switch m.Direction {
+	case models.MirrorPush:
+		outcome, err = s.remote.PushMirror(ctx, localPath, remoteURL, pat)
+	case models.MirrorPull:
+		outcome, err = s.remote.FetchMirror(ctx, localPath, remoteURL, pat)
+		if err == nil {
+			if branch, lsErr := s.remote.LsRemoteDefault(ctx, remoteURL, pat); lsErr == nil {
+				_ = s.remote.SetHead(ctx, localPath, branch)
+			}
+		}
+	default:
+		err = fmt.Errorf("mirror: unknown direction %q", m.Direction)
+	}
+
+	if err != nil {
+		return s.finishRun(ctx, runID, repoID, outcome.RefsChanged, models.MirrorFailed, err.Error(), start)
+	}
+	return s.finishRun(ctx, runID, repoID, outcome.RefsChanged, models.MirrorSuccess, "", start)
+}
+
+// startRun inserts a 'running' row in repo_mirror_runs and flips the mirror's
+// last_status. Returns the new run's id.
+func (s *Service) startRun(ctx context.Context, repoID uuid.UUID, trigger models.MirrorTrigger) (uuid.UUID, error) {
+	var id uuid.UUID
+	if err := s.db.QueryRow(ctx, `
+		INSERT INTO repo_mirror_runs (repo_id, status, trigger)
+		VALUES ($1, 'running', $2) RETURNING id`, repoID, trigger,
+	).Scan(&id); err != nil {
+		return uuid.Nil, err
+	}
+	if _, err := s.db.Exec(ctx, `
+		UPDATE repo_mirrors
+		SET last_status = 'running', updated_at = now()
+		WHERE repo_id = $1`, repoID); err != nil {
+		return uuid.Nil, err
+	}
+	return id, nil
+}
+
+// finishRun writes the terminal state of a run row and updates the mirror's
+// last_status, last_error, last_synced_at, next_run_at. Also prunes history to
+// the last 50 runs per repo.
+func (s *Service) finishRun(
+	ctx context.Context, runID, repoID uuid.UUID,
+	refsChanged int, status models.MirrorStatus, errMsg string,
+	start time.Time,
+) (*SyncResult, error) {
+	dur := time.Since(start)
+	durMs := int(dur.Milliseconds())
+
+	var errPtr *string
+	if errMsg != "" {
+		errPtr = &errMsg
+	}
+
+	if _, err := s.db.Exec(ctx, `
+		UPDATE repo_mirror_runs
+		SET finished_at = now(), status = $1, refs_changed = $2, error = $3, duration_ms = $4
+		WHERE id = $5`, status, refsChanged, errPtr, durMs, runID); err != nil {
+		return nil, fmt.Errorf("mirror: finish run: %w", err)
+	}
+	if _, err := s.db.Exec(ctx, `
+		UPDATE repo_mirrors
+		SET last_status    = $1,
+		    last_error     = $2,
+		    last_synced_at = CASE WHEN $1 = 'success' THEN now() ELSE last_synced_at END,
+		    next_run_at    = CASE
+		                       WHEN interval_seconds > 0 THEN now() + (interval_seconds || ' seconds')::interval
+		                       ELSE NULL
+		                     END,
+		    updated_at     = now()
+		WHERE repo_id = $3`, status, errPtr, repoID); err != nil {
+		return nil, fmt.Errorf("mirror: update mirror state: %w", err)
+	}
+	// Retention: keep last 50 runs per repo. Ignore error — not critical.
+	_, _ = s.db.Exec(ctx, `
+		DELETE FROM repo_mirror_runs
+		WHERE repo_id = $1
+		  AND id NOT IN (
+		    SELECT id FROM repo_mirror_runs WHERE repo_id = $1
+		    ORDER BY started_at DESC LIMIT 50
+		  )`, repoID)
+
+	return &SyncResult{
+		RunID:       runID,
+		Status:      status,
+		RefsChanged: refsChanged,
+		Duration:    dur,
+		Error:       errMsg,
+	}, nil
+}
