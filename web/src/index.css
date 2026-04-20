@@ -5608,6 +5608,80 @@ a.settings-tab-link {
   cursor: not-allowed;
 }
 
+/* ---- Mirror settings tab ---- */
+
+.mirror-status-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+
+.mirror-direction-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+.mirror-direction-end {
+  min-width: 56px;
+  text-align: center;
+  color: var(--text-primary);
+}
+
+.mirror-direction-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 28px;
+  background: var(--bg-tertiary, #1c2128);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--accent, #58a6ff);
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 120ms, transform 120ms;
+}
+
+.mirror-direction-toggle:hover {
+  background: var(--bg-hover, #22272e);
+  transform: scale(1.05);
+}
+
+.mirror-direction-toggle:focus-visible {
+  outline: 2px solid var(--accent, #58a6ff);
+  outline-offset: 2px;
+}
+
+.mirror-slug-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mirror-slug-row .form-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.mirror-pat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mirror-pat-row .form-input {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ---- Selection ---- */
 
 ::selection {
