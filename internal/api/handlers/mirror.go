@@ -177,8 +177,15 @@ func (h *MirrorHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		slog.Error("mirror create: repo create failed", "error", err)
-		writeError(w, http.StatusBadRequest, "repo_create_failed", "failed to create repo")
+		writeError(w, http.StatusInternalServerError, "repo_create_failed", "failed to create repository")
 		return
+	}
+
+	rollback := func(reason string, err error) {
+		if dErr := h.repos.Delete(r.Context(), repository.OwnerName, repository.Name, repository.ID); dErr != nil {
+			slog.Error("mirror create: rollback delete failed",
+				"repo_id", repository.ID, "reason", reason, "delete_error", dErr, "original_error", err)
+		}
 	}
 
 	// 2. Configure pull mirror.
@@ -190,17 +197,25 @@ func (h *MirrorHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IntervalSeconds: req.IntervalSeconds,
 		AutoPush:        false,
 	}); err != nil {
-		_ = h.repos.Delete(r.Context(), repository.OwnerName, repository.Name, repository.ID)
-		slog.Error("mirror create: configure failed", "repo_id", repository.ID, "error", err)
-		writeError(w, http.StatusBadRequest, "mirror_configure_failed", err.Error())
+		rollback("configure", err)
+		switch {
+		case errors.Is(err, mirror.ErrInvalidDirection),
+			errors.Is(err, mirror.ErrInvalidTarget),
+			errors.Is(err, mirror.ErrInvalidInterval),
+			errors.Is(err, mirror.ErrPATRequired):
+			writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		default:
+			slog.Error("mirror create: configure failed", "repo_id", repository.ID, "error", err)
+			writeError(w, http.StatusInternalServerError, "mirror_configure_failed", "failed to configure mirror")
+		}
 		return
 	}
 
 	// 3. Initial clone (synchronous — client shows spinner until this returns).
 	if err := h.mirrors.InitialClone(r.Context(), repository.ID); err != nil {
-		_ = h.repos.Delete(r.Context(), repository.OwnerName, repository.Name, repository.ID)
+		rollback("initial_clone", err)
 		slog.Error("mirror create: initial clone failed", "repo_id", repository.ID, "error", err)
-		writeError(w, http.StatusBadRequest, "clone_failed", err.Error())
+		writeError(w, http.StatusBadGateway, "clone_failed", "failed to clone from GitHub — check the slug and token")
 		return
 	}
 
