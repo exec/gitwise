@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -497,7 +498,7 @@ func (s *Service) InitialClone(ctx context.Context, repoID uuid.UUID) error {
 	pat, err := s.decryptPAT(ciphertext, nonce)
 	if err != nil {
 		_, _ = s.finishRun(ctx, runID, repoID, 0, models.MirrorFailed, err.Error(), start)
-		return err
+		return fmt.Errorf("mirror: initial clone decrypt: %w", err)
 	}
 
 	localPath := s.repoPath(repoID)
@@ -508,11 +509,13 @@ func (s *Service) InitialClone(ctx context.Context, repoID uuid.UUID) error {
 		_, _ = s.finishRun(ctx, runID, repoID, 0, models.MirrorFailed, "init: "+err.Error(), start)
 		return fmt.Errorf("mirror: init bare: %w", err)
 	}
-	// 2. fetch mirror
+	// 2. fetch mirror; on failure, remove the bare dir we just created so
+	//    the caller's rollback path doesn't leave an orphan on disk.
 	outcome, err := s.remote.FetchMirror(ctx, localPath, remoteURL, pat)
 	if err != nil {
+		_ = os.RemoveAll(localPath)
 		_, _ = s.finishRun(ctx, runID, repoID, outcome.RefsChanged, models.MirrorFailed, err.Error(), start)
-		return err
+		return fmt.Errorf("mirror: initial fetch: %w", err)
 	}
 	// 3. set HEAD to remote's default branch (best effort)
 	if branch, lsErr := s.remote.LsRemoteDefault(ctx, remoteURL, pat); lsErr == nil {
