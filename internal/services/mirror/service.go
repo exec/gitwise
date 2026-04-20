@@ -172,7 +172,10 @@ func (s *Service) ListRuns(ctx context.Context, repoID uuid.UUID, limit int) ([]
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("mirror: list runs: %w", err)
+	}
+	return out, nil
 }
 
 func (s *Service) decryptPAT(ciphertext, nonce []byte) (string, error) {
@@ -181,7 +184,7 @@ func (s *Service) decryptPAT(ciphertext, nonce []byte) (string, error) {
 	}
 	pt, err := s.crypto.Open(ciphertext, nonce)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("mirror: decrypt pat: %w", err)
 	}
 	return string(pt), nil
 }
