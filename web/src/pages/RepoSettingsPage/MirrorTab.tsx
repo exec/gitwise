@@ -199,7 +199,7 @@ export function MirrorTab({ owner, repo, queryClient }: Props) {
           <button
             type="button"
             onClick={() => syncNow.mutate()}
-            disabled={m.last_status === "running"}
+            disabled={m.last_status === "running" || syncNow.isPending}
           >
             Sync now
           </button>
