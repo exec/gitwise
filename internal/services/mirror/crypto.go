@@ -30,11 +30,11 @@ func NewCrypto(secret string) (*Crypto, error) {
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("mirror crypto: create cipher: %w", err)
 	}
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("mirror crypto: create gcm: %w", err)
 	}
 	return &Crypto{aead: aead}, nil
 }
@@ -51,6 +51,9 @@ func (c *Crypto) Seal(plaintext []byte) (ciphertext, nonce []byte, err error) {
 func (c *Crypto) Open(ciphertext, nonce []byte) ([]byte, error) {
 	if len(nonce) != c.aead.NonceSize() {
 		return nil, errors.New("mirror crypto: bad nonce size")
+	}
+	if len(ciphertext) < c.aead.Overhead() {
+		return nil, errors.New("mirror crypto: ciphertext too short")
 	}
 	return c.aead.Open(nil, nonce, ciphertext, nil)
 }

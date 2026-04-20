@@ -67,3 +67,11 @@ func TestNewCryptoRejectsEmptySecret(t *testing.T) {
 		t.Fatal("expected error on empty secret")
 	}
 }
+
+func TestOpenRejectsTooShortCiphertext(t *testing.T) {
+	c, _ := NewCrypto("secret")
+	_, err := c.Open([]byte{0x00}, make([]byte, 12))
+	if err == nil {
+		t.Fatal("expected error on too-short ciphertext")
+	}
+}
