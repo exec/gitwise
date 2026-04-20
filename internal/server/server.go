@@ -114,6 +114,7 @@ type Server struct {
 	orgHandler        *handlers.OrgHandler
 	teamHandler      *handlers.TeamHandler
 	webhookHandler   *handlers.WebhookHandler
+	mirrorHandler    *handlers.MirrorHandler
 	sshkeyHandler    *handlers.SSHKeyHandler
 	twoFactorHandler *handlers.TwoFactorHandler
 	adminHandler     *handlers.AdminHandler
@@ -251,6 +252,10 @@ func (s *Server) initServices() {
 	s.teamHandler = handlers.NewTeamHandler(s.orgSvc, s.teamSvc)
 
 	s.webhookHandler = handlers.NewWebhookHandler(s.repoSvc, s.webhookSvc)
+
+	if s.mirrorSvc != nil {
+		s.mirrorHandler = handlers.NewMirrorHandler(s.repoSvc, s.mirrorSvc)
+	}
 
 	// SSH key service + handler
 	s.sshkeySvc = sshkey.NewService(s.db)
@@ -541,6 +546,18 @@ func (s *Server) setupRoutes() {
 						r.Get("/{webhookID}/deliveries", s.webhookHandler.ListDeliveries)
 						r.Post("/{webhookID}/test", s.webhookHandler.Test)
 					})
+
+					// Mirror config (only registered when mirroring is enabled)
+					if s.mirrorHandler != nil {
+						r.Route("/mirror", func(r chi.Router) {
+							r.Use(middleware.RequireAuth)
+							r.Get("/", s.mirrorHandler.Get)
+							r.Put("/", s.mirrorHandler.Configure)
+							r.Delete("/", s.mirrorHandler.Delete)
+							r.Post("/sync", s.mirrorHandler.SyncNow)
+							r.Get("/runs", s.mirrorHandler.ListRuns)
+						})
+					}
 
 					// Agents (repo-level)
 					r.Get("/agents", s.agentHandler.ListForRepo)
