@@ -3,8 +3,9 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { get, post, put, patch, del } from "../lib/api";
 import RepoHeader from "../components/RepoHeader";
+import { MirrorTab } from "./RepoSettingsPage/MirrorTab";
 
-type SettingsTab = "general" | "webhooks" | "branch-protection" | "labels" | "milestones" | "agents";
+type SettingsTab = "general" | "webhooks" | "branch-protection" | "labels" | "milestones" | "agents" | "mirror";
 
 interface Repo {
   id: string;
@@ -83,7 +84,7 @@ export default function RepoSettingsPage() {
       <RepoHeader owner={owner!} repo={repo!} activeTab="settings" />
       <div className="settings-page">
         <nav className="settings-sidebar">
-          {(["general", "webhooks", "branch-protection", "labels", "milestones", "agents"] as SettingsTab[]).map((tab) => (
+          {(["general", "webhooks", "branch-protection", "labels", "milestones", "agents", "mirror"] as SettingsTab[]).map((tab) => (
             <button
               key={tab}
               className={`settings-tab ${activeTab === tab ? "active" : ""}`}
@@ -111,6 +112,9 @@ export default function RepoSettingsPage() {
           )}
           {activeTab === "agents" && (
             <AgentsSettingsTab owner={owner!} repo={repo!} queryClient={queryClient} />
+          )}
+          {activeTab === "mirror" && (
+            <MirrorTab owner={owner!} repo={repo!} queryClient={queryClient} />
           )}
         </div>
       </div>

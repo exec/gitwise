@@ -1,10 +1,10 @@
 import { useState, useEffect, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { post, get, ApiError } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
 
-type ImportSource = "github" | "gitlab";
+type ImportSource = "github" | "gitlab" | "github_mirror";
 
 interface ImportJob {
   id: string;
@@ -22,6 +22,7 @@ interface ImportStatus {
 
 export default function ImportPage() {
   const user = useAuthStore((s) => s.user);
+  const navigate = useNavigate();
   const [tab, setTab] = useState<ImportSource>("github");
 
   // GitHub fields
@@ -34,6 +35,13 @@ export default function ImportPage() {
   const [glProjectURL, setGlProjectURL] = useState("");
   const [glInstanceURL, setGlInstanceURL] = useState("https://gitlab.com");
   const [glVisibility, setGlVisibility] = useState("private");
+
+  // Mirror fields
+  const [mirrorName, setMirrorName] = useState("");
+  const [mirrorSlug, setMirrorSlug] = useState("");
+  const [mirrorPAT, setMirrorPAT] = useState("");
+  const [mirrorInterval, setMirrorInterval] = useState(3600);
+  const [mirrorVisibility, setMirrorVisibility] = useState("private");
 
   // Job tracking
   const [jobID, setJobID] = useState<string | null>(null);
@@ -66,6 +74,30 @@ export default function ImportPage() {
     onSuccess: (data) => {
       setJobID(data.id);
       setError("");
+    },
+    onError: (err) => {
+      if (err instanceof ApiError) {
+        setError(err.message);
+      } else {
+        setError("An unexpected error occurred");
+      }
+    },
+  });
+
+  const mirrorMutation = useMutation({
+    mutationFn: (payload: {
+      name: string;
+      github_slug: string;
+      pat?: string;
+      interval_seconds: number;
+      visibility: string;
+    }) =>
+      post<{ id: string; owner: string; name: string }>(
+        "/repos/mirror-create",
+        payload,
+      ).then((r) => r.data),
+    onSuccess: (data) => {
+      navigate(`/${data.owner}/${data.name}`);
     },
     onError: (err) => {
       if (err instanceof ApiError) {
@@ -123,8 +155,22 @@ export default function ImportPage() {
     });
   };
 
+  const handleMirrorSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    mirrorMutation.mutate({
+      name: mirrorName,
+      github_slug: mirrorSlug,
+      pat: mirrorPAT || undefined,
+      interval_seconds: mirrorInterval,
+      visibility: mirrorVisibility,
+    });
+  };
+
   const isPending =
-    githubMutation.isPending || gitlabMutation.isPending;
+    githubMutation.isPending ||
+    gitlabMutation.isPending ||
+    mirrorMutation.isPending;
 
   const resetForm = () => {
     setJobID(null);
@@ -217,6 +263,13 @@ export default function ImportPage() {
               onClick={() => setTab("gitlab")}
             >
               GitLab
+            </button>
+            <button
+              type="button"
+              className={`import-tab ${tab === "github_mirror" ? "import-tab--active" : ""}`}
+              onClick={() => setTab("github_mirror")}
+            >
+              Mirror from GitHub
             </button>
           </div>
 
@@ -361,6 +414,113 @@ export default function ImportPage() {
                 disabled={isPending}
               >
                 {isPending ? "Starting import..." : "Import from GitLab"}
+              </button>
+            </form>
+          )}
+
+          {tab === "github_mirror" && (
+            <form onSubmit={handleMirrorSubmit} className="import-form">
+              <p className="import-subtitle">
+                Creates a Gitwise repo that automatically stays in sync with a
+                GitHub repository. The repo will be read-only on Gitwise.
+              </p>
+              <div className="form-group">
+                <label htmlFor="mirror-name">Name on Gitwise</label>
+                <input
+                  id="mirror-name"
+                  type="text"
+                  value={mirrorName}
+                  onChange={(e) => setMirrorName(e.target.value)}
+                  placeholder="my-mirror"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="mirror-slug">GitHub repo (owner/name)</label>
+                <input
+                  id="mirror-slug"
+                  type="text"
+                  value={mirrorSlug}
+                  onChange={(e) => setMirrorSlug(e.target.value)}
+                  placeholder="facebook/react"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="mirror-pat">
+                  Access token (optional for public repos)
+                </label>
+                <input
+                  id="mirror-pat"
+                  type="password"
+                  value={mirrorPAT}
+                  onChange={(e) => setMirrorPAT(e.target.value)}
+                  placeholder="ghp_..."
+                  autoComplete="off"
+                />
+                <p className="form-hint">
+                  Required for private repos (<code>repo</code> scope).{" "}
+                  <a
+                    href="https://github.com/settings/tokens/new?scopes=repo"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Create a token
+                  </a>
+                </p>
+              </div>
+              <div className="form-group">
+                <label>Visibility</label>
+                <div className="radio-group">
+                  <label className="radio-label">
+                    <input
+                      type="radio"
+                      name="mirror-visibility"
+                      value="public"
+                      checked={mirrorVisibility === "public"}
+                      onChange={(e) => setMirrorVisibility(e.target.value)}
+                    />
+                    Public
+                  </label>
+                  <label className="radio-label">
+                    <input
+                      type="radio"
+                      name="mirror-visibility"
+                      value="private"
+                      checked={mirrorVisibility === "private"}
+                      onChange={(e) => setMirrorVisibility(e.target.value)}
+                    />
+                    Private
+                  </label>
+                </div>
+              </div>
+              <div className="form-group">
+                <label htmlFor="mirror-interval">Sync interval</label>
+                <select
+                  id="mirror-interval"
+                  value={mirrorInterval}
+                  onChange={(e) => setMirrorInterval(Number(e.target.value))}
+                >
+                  <option value={300}>Every 5 minutes</option>
+                  <option value={900}>Every 15 minutes</option>
+                  <option value={3600}>Every hour</option>
+                  <option value={21600}>Every 6 hours</option>
+                  <option value={86400}>Every 24 hours</option>
+                </select>
+              </div>
+              {mirrorMutation.isPending && (
+                <p className="form-hint">
+                  Cloning repository — this may take a moment...
+                </p>
+              )}
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={mirrorMutation.isPending}
+              >
+                {mirrorMutation.isPending
+                  ? "Cloning\u2026"
+                  : "Create mirrored repo"}
               </button>
             </form>
           )}

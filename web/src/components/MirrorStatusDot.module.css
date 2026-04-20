@@ -1,0 +1,29 @@
+.dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  position: relative;
+  vertical-align: middle;
+  cursor: help;
+}
+
+.pending  { background: #9aa0a6; }
+.success  { background: #1f9d55; }
+.failed   { background: #d93025; cursor: pointer; }
+
+.running {
+  background: #f4b400;
+  animation: mirror-pulse 1.2s ease-in-out infinite;
+}
+@keyframes mirror-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+
+.arrow {
+  font-size: 0.6em;
+  color: rgba(255, 255, 255, 0.9);
+  line-height: 1;
+  pointer-events: none;
+}
