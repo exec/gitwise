@@ -459,3 +459,68 @@ func (s *Service) ReapStuck(ctx context.Context) (int, error) {
 	}
 	return int(tag.RowsAffected()), nil
 }
+
+// InitialClone initializes a bare repo and mirror-fetches from GitHub.
+// Caller is responsible for:
+//  1. Creating the repo row and the repo_mirrors row (direction='pull') first.
+//  2. Rolling back the repo row on error if they want clean failure semantics.
+//
+// Runs synchronously. Intended for the repo-creation flow where the user sees
+// a blocking spinner.
+func (s *Service) InitialClone(ctx context.Context, repoID uuid.UUID) error {
+	lock := s.lockFor(repoID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Load target + encrypted PAT in one query (same pattern as SyncNow).
+	var (
+		owner, repo       string
+		ciphertext, nonce []byte
+	)
+	err := s.db.QueryRow(ctx, `
+		SELECT github_owner, github_repo, pat_ciphertext, pat_nonce
+		FROM repo_mirrors WHERE repo_id = $1`, repoID,
+	).Scan(&owner, &repo, &ciphertext, &nonce)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrMirrorNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("mirror: load for initial clone: %w", err)
+	}
+
+	runID, err := s.startRun(ctx, repoID, models.MirrorTriggerInitialClone)
+	if err != nil {
+		return fmt.Errorf("mirror: start initial clone run: %w", err)
+	}
+	start := nowUTC()
+
+	pat, err := s.decryptPAT(ciphertext, nonce)
+	if err != nil {
+		_, _ = s.finishRun(ctx, runID, repoID, 0, models.MirrorFailed, err.Error(), start)
+		return err
+	}
+
+	localPath := s.repoPath(repoID)
+	remoteURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
+
+	// 1. init --bare
+	if err := s.remote.InitBare(ctx, localPath); err != nil {
+		_, _ = s.finishRun(ctx, runID, repoID, 0, models.MirrorFailed, "init: "+err.Error(), start)
+		return fmt.Errorf("mirror: init bare: %w", err)
+	}
+	// 2. fetch mirror
+	outcome, err := s.remote.FetchMirror(ctx, localPath, remoteURL, pat)
+	if err != nil {
+		_, _ = s.finishRun(ctx, runID, repoID, outcome.RefsChanged, models.MirrorFailed, err.Error(), start)
+		return err
+	}
+	// 3. set HEAD to remote's default branch (best effort)
+	if branch, lsErr := s.remote.LsRemoteDefault(ctx, remoteURL, pat); lsErr == nil {
+		_ = s.remote.SetHead(ctx, localPath, branch)
+	}
+
+	if _, err := s.finishRun(ctx, runID, repoID, outcome.RefsChanged, models.MirrorSuccess, "", start); err != nil {
+		return fmt.Errorf("mirror: finish initial clone: %w", err)
+	}
+	return nil
+}
