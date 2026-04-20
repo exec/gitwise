@@ -36,6 +36,7 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/label"
 	"github.com/gitwise-io/gitwise/internal/services/llm"
 	"github.com/gitwise-io/gitwise/internal/services/milestone"
+	"github.com/gitwise-io/gitwise/internal/services/mirror"
 	"github.com/gitwise-io/gitwise/internal/services/notification"
 	"github.com/gitwise-io/gitwise/internal/services/oauth"
 	"github.com/gitwise-io/gitwise/internal/services/org"
@@ -48,7 +49,6 @@ import (
 	"github.com/gitwise-io/gitwise/internal/services/team"
 	totpsvc "github.com/gitwise-io/gitwise/internal/services/totp"
 	"github.com/gitwise-io/gitwise/internal/services/user"
-	"github.com/gitwise-io/gitwise/internal/services/mirror"
 	"github.com/gitwise-io/gitwise/internal/services/webhook"
 	"github.com/gitwise-io/gitwise/internal/workers"
 	gitwisews "github.com/gitwise-io/gitwise/internal/websocket"
@@ -184,15 +184,12 @@ func (s *Server) initServices() {
 	s.webhookSvc = webhook.NewService(s.db)
 
 	// Mirror service + worker
-	mirrorCrypto, err := mirror.NewCrypto(s.cfg.Secret)
-	if err != nil {
-		slog.Error("failed to initialize mirror crypto", "error", err)
+	if s.cfg.Secret == "" {
+		slog.Warn("GITWISE_SECRET not set — GitHub mirroring disabled")
+	} else if mirrorCrypto, err := mirror.NewCrypto(s.cfg.Secret); err != nil {
+		slog.Error("mirror crypto init failed — GitHub mirroring disabled", "error", err)
 	} else {
-		reposPath := s.cfg.Git.ReposPath
-		if reposPath == "" {
-			reposPath = os.Getenv("GITWISE_REPOS_PATH")
-		}
-		s.mirrorSvc = mirror.NewService(s.db, mirrorCrypto, mirror.NewRemote(), reposPath)
+		s.mirrorSvc = mirror.NewService(s.db, mirrorCrypto, mirror.NewRemote(), s.cfg.Git.ReposPath)
 		s.mirrorWorker = workers.NewMirrorWorker(s.mirrorSvc, 60*time.Second)
 	}
 
