@@ -529,3 +529,50 @@ func (s *Service) InitialClone(ctx context.Context, repoID uuid.UUID) error {
 	}
 	return nil
 }
+
+// MirrorRow is the admin-view projection: a mirror plus the owner/repo name
+// for display.
+type MirrorRow struct {
+	models.RepoMirror
+	RepoOwner string `json:"repo_owner"`
+	RepoName  string `json:"repo_name"`
+}
+
+// ListAll returns every configured mirror in the instance, joined with the
+// repo's owner and name. Admin endpoint only.
+func (s *Service) ListAll(ctx context.Context) ([]MirrorRow, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT rm.repo_id, rm.direction, rm.github_owner, rm.github_repo,
+		       (rm.pat_ciphertext IS NOT NULL), rm.interval_seconds, rm.auto_push,
+		       rm.last_status, COALESCE(rm.last_error, ''),
+		       rm.last_synced_at, rm.next_run_at, rm.created_at, rm.updated_at,
+		       LOWER(COALESCE(u.username, o.name)) AS owner_name,
+		       r.name AS repo_name
+		FROM repo_mirrors rm
+		JOIN repositories r ON r.id = rm.repo_id
+		LEFT JOIN users u         ON r.owner_id = u.id AND r.owner_type = 'user'
+		LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
+		ORDER BY rm.last_synced_at DESC NULLS LAST`)
+	if err != nil {
+		return nil, fmt.Errorf("mirror: list all: %w", err)
+	}
+	defer rows.Close()
+
+	var out []MirrorRow
+	for rows.Next() {
+		var m MirrorRow
+		if err := rows.Scan(&m.RepoID, &m.Direction, &m.GithubOwner, &m.GithubRepo,
+			&m.HasPAT, &m.IntervalSeconds, &m.AutoPush,
+			&m.LastStatus, &m.LastError, &m.LastSyncedAt, &m.NextRunAt,
+			&m.CreatedAt, &m.UpdatedAt,
+			&m.RepoOwner, &m.RepoName,
+		); err != nil {
+			return nil, fmt.Errorf("mirror: scan list all: %w", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("mirror: list all: %w", err)
+	}
+	return out, nil
+}

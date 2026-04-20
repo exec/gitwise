@@ -117,8 +117,9 @@ type Server struct {
 	mirrorHandler    *handlers.MirrorHandler
 	sshkeyHandler    *handlers.SSHKeyHandler
 	twoFactorHandler *handlers.TwoFactorHandler
-	adminHandler     *handlers.AdminHandler
-	importHandler    *handlers.ImportHandler
+	adminHandler       *handlers.AdminHandler
+	adminMirrorHandler *handlers.AdminMirrorHandler
+	importHandler      *handlers.ImportHandler
 	agentHandler     *handlers.AgentHandler
 	chatHandler      *handlers.ChatHandler
 
@@ -303,6 +304,9 @@ func (s *Server) initServices() {
 
 	// Admin handler (after commitIndexer is initialized)
 	s.adminHandler = handlers.NewAdminHandler(s.db, s.userSvc, s.commitIndexer)
+	if s.mirrorSvc != nil {
+		s.adminMirrorHandler = handlers.NewAdminMirrorHandler(s.mirrorSvc)
+	}
 
 	// Git HTTP protocol
 	s.gitHTTP = git.NewHTTPHandler(s.gitSvc, func(username, password string) (string, bool) {
@@ -678,6 +682,9 @@ func (s *Server) setupRoutes() {
 			r.Get("/stats", s.adminHandler.GetStats)
 			r.Get("/jobs", s.adminHandler.ListJobs)
 			r.Post("/reindex-commits", s.adminHandler.ReindexCommits)
+			if s.adminMirrorHandler != nil {
+				r.Get("/mirrors", s.adminMirrorHandler.List)
+			}
 		})
 	})
 
