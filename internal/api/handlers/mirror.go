@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -31,7 +32,8 @@ func (h *MirrorHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "mirror_error", err.Error())
+		slog.Error("mirror: get failed", "repo_id", repository.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "mirror_error", "failed to load mirror")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"mirror": m})
@@ -55,7 +57,8 @@ func (h *MirrorHandler) Configure(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, "mirror_error", err.Error())
+		slog.Error("mirror: configure failed", "repo_id", repository.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "mirror_error", "failed to configure mirror")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"mirror": m})
@@ -67,7 +70,8 @@ func (h *MirrorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.mirrors.Remove(r.Context(), repository.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "mirror_error", err.Error())
+		slog.Error("mirror: delete failed", "repo_id", repository.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "mirror_error", "failed to remove mirror")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -78,14 +82,31 @@ func (h *MirrorHandler) SyncNow(w http.ResponseWriter, r *http.Request) {
 	if repository == nil {
 		return
 	}
-	// Run async — caller gets 202 and reads status via GET.
+
+	// Reject if a sync is already running. Pre-flight only — there's a small
+	// TOCTOU window between this check and the goroutine grabbing the per-repo
+	// mutex, but it eliminates the common-case flood (rapid button clicks).
+	existing, err := h.mirrors.Get(r.Context(), repository.ID)
+	if errors.Is(err, mirror.ErrMirrorNotFound) {
+		writeError(w, http.StatusNotFound, "not_configured", "mirror is not configured")
+		return
+	}
+	if err != nil {
+		slog.Error("mirror: sync pre-check failed", "repo_id", repository.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "mirror_error", "failed to start sync")
+		return
+	}
+	if existing.LastStatus == models.MirrorRunning {
+		writeError(w, http.StatusConflict, "sync_in_progress", "a sync is already running")
+		return
+	}
+
 	repoID := repository.ID
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 		if _, err := h.mirrors.SyncNow(ctx, repoID, models.MirrorTriggerManual); err != nil {
-			// logged / persisted inside the service
-			_ = err
+			slog.Error("mirror: manual sync failed", "repo_id", repoID, "error", err)
 		}
 	}()
 	w.WriteHeader(http.StatusAccepted)
@@ -98,7 +119,8 @@ func (h *MirrorHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	runs, err := h.mirrors.ListRuns(r.Context(), repository.ID, 50)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "mirror_error", err.Error())
+		slog.Error("mirror: list runs failed", "repo_id", repository.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "mirror_error", "failed to load run history")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
