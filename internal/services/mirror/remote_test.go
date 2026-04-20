@@ -88,7 +88,8 @@ func TestFetchMirrorParsesRefsChanged(t *testing.T) {
 func TestFetchMirrorSkipsAskpassWhenNoPAT(t *testing.T) {
 	_, _, envPath := installFakeGit(t, "")
 	r := NewRemote()
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	_, _ = r.FetchMirror(ctx, "/tmp/local.git", "https://github.com/o/r.git", "")
 
 	env, _ := os.ReadFile(envPath)
@@ -106,7 +107,8 @@ func TestRemoteReturnsErrorOnNonZeroExit(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	r := NewRemote()
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	_, err := r.PushMirror(ctx, "/tmp/local.git", "https://github.com/o/r.git", "")
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("expected error containing stderr, got %v", err)
@@ -115,5 +117,46 @@ func TestRemoteReturnsErrorOnNonZeroExit(t *testing.T) {
 	// Sanity: exec.ExitError surfaces
 	if _, ok := err.(*exec.ExitError); ok {
 		t.Log("got ExitError")
+	}
+}
+
+func TestFetchMirrorDoesNotCountUpToDateLines(t *testing.T) {
+	stderr := ` = [up to date]      main        -> main
+ = [up to date]      develop     -> develop
+ * [new branch]      feature     -> feature
+`
+	installFakeGit(t, stderr)
+	r := NewRemote()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := r.FetchMirror(ctx, "/tmp/local.git", "https://github.com/o/r.git", "")
+	if err != nil {
+		t.Fatalf("FetchMirror: %v", err)
+	}
+	if result.RefsChanged != 1 {
+		t.Errorf("RefsChanged = %d, want 1 (only the new branch)", result.RefsChanged)
+	}
+}
+
+func TestLsRemoteDefaultParsesSymref(t *testing.T) {
+	dir := t.TempDir()
+	// Fake git that emits a ls-remote --symref style response.
+	script := "#!/bin/sh\nprintf 'ref: refs/heads/trunk\\tHEAD\\nabc123\\tHEAD\\n'\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r := NewRemote()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	branch, err := r.LsRemoteDefault(ctx, "https://github.com/o/r.git", "")
+	if err != nil {
+		t.Fatalf("LsRemoteDefault: %v", err)
+	}
+	if branch != "trunk" {
+		t.Errorf("branch = %q, want %q", branch, "trunk")
 	}
 }

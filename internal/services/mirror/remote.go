@@ -42,7 +42,7 @@ func (r *Remote) LsRemoteDefault(ctx context.Context, remoteURL, pat string) (st
 	args := []string{"ls-remote", "--symref", remoteURL, "HEAD"}
 	out, err := r.runGitCombined(ctx, args, pat)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("git ls-remote %s: %w (output: %s)", remoteURL, err, out)
 	}
 	// Output first line: "ref: refs/heads/main\tHEAD"
 	for _, line := range strings.Split(out, "\n") {
@@ -105,7 +105,17 @@ func (r *Remote) runGitCombined(ctx context.Context, args []string, pat string) 
 }
 
 func (r *Remote) prepareEnv(pat string) (*bytes.Buffer, string, []string, error) {
-	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	parent := os.Environ()
+	env := make([]string, 0, len(parent)+3)
+	for _, e := range parent {
+		// Strip any pre-existing GITWISE_MIRROR_PAT from the parent env so a
+		// misconfigured deployment can't leak a stale token into git's child.
+		if strings.HasPrefix(e, "GITWISE_MIRROR_PAT=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	env = append(env, "GIT_TERMINAL_PROMPT=0")
 	var askpassDir string
 	if pat != "" {
 		dir, err := os.MkdirTemp("", "gitwise-askpass-*")
@@ -128,19 +138,28 @@ func (r *Remote) prepareEnv(pat string) (*bytes.Buffer, string, []string, error)
 }
 
 // countRefChanges counts ref-update lines in git's stderr output.
-// Git push/fetch emit lines like:
+// Ref-update lines are indented and contain " -> " (the local -> remote
+// ref separator git uses for push and fetch). Example shapes:
 //   " * [new branch]      main -> main"
 //   " * [new tag]         v1.0 -> v1.0"
-//   " - [deleted]               (none) -> refs/heads/old"
+//   " - [deleted]                (none) -> refs/heads/old"
 //   " + abc1234...def5678 branch -> branch"
-//   "   abc1234..def5678  branch -> branch"
-// We match any non-empty line that contains " -> " (with spaces), which is
-// the canonical separator git uses for all ref-update status lines.
+//   "   abc1234..def5678  branch -> branch"    (fast-forward)
+//   " = [up to date]      main -> main"        (NO change, excluded)
+// We match the " -> " shape broadly and then drop "up to date" entries
+// so no-op syncs report 0 refs changed.
 var refLineRe = regexp.MustCompile(`(?m)^\s+\S.*\s->\s`)
+var upToDateRe = regexp.MustCompile(`\[up to date\]`)
 
 func countRefChanges(stderr string) int {
 	if stderr == "" {
 		return 0
 	}
-	return len(refLineRe.FindAllString(stderr, -1))
+	count := 0
+	for _, m := range refLineRe.FindAllString(stderr, -1) {
+		if !upToDateRe.MatchString(m) {
+			count++
+		}
+	}
+	return count
 }
