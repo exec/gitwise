@@ -93,11 +93,15 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [providers, setProviders] = useState<string[]>([]);
+  const [providersFailed, setProvidersFailed] = useState(false);
 
   useEffect(() => {
     get<string[]>("/auth/providers")
       .then(({ data }) => setProviders(data ?? []))
-      .catch(() => {});
+      .catch((err) => {
+        console.warn("[LoginPage] Failed to fetch auth providers:", err);
+        setProvidersFailed(true);
+      });
   }, []);
 
   // C5: Check for pending_2fa query parameter (from GitHub OAuth redirect).
@@ -139,6 +143,11 @@ export default function LoginPage() {
       <div className="auth-card">
         <h1>Sign in to Gitwise</h1>
         {error && <div className="error-banner">{error}</div>}
+        {providersFailed && (
+          <div className="error-banner" style={{ marginBottom: 12 }}>
+            OAuth providers could not be loaded. You can still sign in below.
+          </div>
+        )}
         {providers.includes("github") && (
           <>
             <a href="/api/v1/auth/github" className="btn btn-github btn-block">
