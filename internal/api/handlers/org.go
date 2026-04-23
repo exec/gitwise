@@ -225,6 +225,10 @@ func (h *OrgHandler) AddOrUpdateMember(w http.ResponseWriter, r *http.Request) {
 	if role == "" {
 		role = "member"
 	}
+	if role != "owner" && role != "member" {
+		writeFieldError(w, http.StatusBadRequest, "invalid_role", "role must be 'owner' or 'member'", "role")
+		return
+	}
 
 	if err := h.orgSvc.AddMember(r.Context(), name, username, role); err != nil {
 		if errors.Is(err, org.ErrNotFound) {

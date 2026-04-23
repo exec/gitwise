@@ -34,9 +34,12 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 			req.Offset = o
 		}
 		if repoIDStr := r.URL.Query().Get("repo_id"); repoIDStr != "" {
-			if id, err := uuid.Parse(repoIDStr); err == nil {
-				req.RepoID = &id
+			id, err := uuid.Parse(repoIDStr)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "validation_error", "repo_id must be a valid UUID")
+				return
 			}
+			req.RepoID = &id
 		}
 	} else {
 		if handleDecodeError(w, decodeJSON(r, &req)) {
