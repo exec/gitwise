@@ -2,14 +2,30 @@ package middleware
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
+
+// redisErrLogger throttles Redis-error log messages to at most one per minute
+// to prevent log flooding during sustained outages.
+type redisErrLogger struct {
+	lastLog atomic.Int64 // unix seconds of last log
+}
+
+func (l *redisErrLogger) logOnce(err error) {
+	now := time.Now().Unix()
+	prev := l.lastLog.Load()
+	if now-prev >= 60 && l.lastLog.CompareAndSwap(prev, now) {
+		slog.Error("rate limiter: Redis unavailable, failing closed", "error", err)
+	}
+}
 
 // RateLimit returns middleware that limits requests per IP using a sliding
 // window counter backed by Redis. When the limit is exceeded it responds
@@ -26,6 +42,7 @@ func AuthRateLimit(rdb *redis.Client, limit int, window time.Duration) func(http
 }
 
 func rateLimit(rdb *redis.Client, limit int, window time.Duration, bucket string) func(http.Handler) http.Handler {
+	logger := &redisErrLogger{}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := extractIP(r)
@@ -37,9 +54,13 @@ func rateLimit(rdb *redis.Client, limit int, window time.Duration, bucket string
 			// The window resets when the key expires.
 			count, err := rdb.Incr(ctx, key).Result()
 			if err != nil {
-				// If Redis is down, allow the request rather than blocking
-				// all traffic. Log-worthy but not user-facing.
-				next.ServeHTTP(w, r)
+				// Fail closed: if Redis is unavailable we cannot enforce rate
+				// limits, so we return 503 rather than allow unlimited traffic.
+				logger.logOnce(err)
+				w.Header().Set("Retry-After", "10")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				fmt.Fprint(w, `{"errors":[{"code":"service_unavailable","message":"rate limiter unavailable, please retry shortly"}]}`)
 				return
 			}
 
