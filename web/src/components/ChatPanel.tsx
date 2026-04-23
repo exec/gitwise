@@ -93,6 +93,8 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
   const [sendError, setSendError] = useState<string | null>(null);
   // Hold the optimistic user message to display immediately
   const [optimisticUserMsg, setOptimisticUserMsg] = useState<ChatMessage | null>(null);
+  // AbortController for the in-flight streaming fetch
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const deleteConversation = useMutation({
     mutationFn: (convId: string) =>
@@ -124,9 +126,22 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
     scrollToBottom();
   }, [conversationQuery.data, streamingContent, scrollToBottom]);
 
+  // Abort any in-flight stream on unmount
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
+
   const handleSend = async () => {
     const content = messageInput.trim();
     if (!content || !activeConversation || isSending) return;
+
+    // Abort any previous in-flight request and create a fresh controller
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const { signal } = controller;
 
     setMessageInput("");
     setIsSending(true);
@@ -142,11 +157,12 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ content }),
           credentials: "include",
+          signal,
         },
       );
 
       if (!resp.ok || !resp.body) {
-        setSendError(`Request failed with status ${resp.status}`);
+        if (!signal.aborted) setSendError(`Request failed with status ${resp.status}`);
         return;
       }
 
@@ -157,6 +173,7 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (signal.aborted) return;
 
         buffer += decoder.decode(value, { stream: true });
 
@@ -165,6 +182,7 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
         buffer = events.pop()!; // Keep incomplete event in buffer
 
         for (const event of events) {
+          if (signal.aborted) return;
           if (!event.trim()) continue;
           const lines = event.split("\n");
           let eventType = "";
@@ -176,15 +194,27 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
           }
 
           if (eventType === "user_message" && data) {
-            const msg = JSON.parse(data) as ChatMessage;
-            setOptimisticUserMsg(msg);
+            try {
+              const msg = JSON.parse(data) as ChatMessage;
+              setOptimisticUserMsg(msg);
+            } catch (err) {
+              console.warn("[ChatPanel] Failed to parse user_message chunk:", err);
+            }
           } else if (eventType === "chunk" && data) {
-            const chunk = JSON.parse(data) as { content: string };
-            setStreamingContent((prev) => prev + chunk.content);
+            try {
+              const chunk = JSON.parse(data) as { content: string };
+              setStreamingContent((prev) => prev + chunk.content);
+            } catch (err) {
+              console.warn("[ChatPanel] Failed to parse chunk:", err);
+            }
           } else if (eventType === "tool_call" && data) {
-            const tc = JSON.parse(data) as { files?: string[] };
-            const names = tc.files?.join(", ") || "files";
-            setStreamingContent((prev) => prev + `\n\n*Reading ${names}...*\n\n`);
+            try {
+              const tc = JSON.parse(data) as { files?: string[] };
+              const names = tc.files?.join(", ") || "files";
+              setStreamingContent((prev) => prev + `\n\n*Reading ${names}...*\n\n`);
+            } catch (err) {
+              console.warn("[ChatPanel] Failed to parse tool_call chunk:", err);
+            }
           } else if (eventType === "clear_stream") {
             setStreamingContent("");
           } else if (eventType === "assistant_message") {
@@ -193,26 +223,34 @@ export default function ChatPanel({ owner, repo }: ChatPanelProps) {
             setStreamingContent("");
             setOptimisticUserMsg(null);
           } else if (eventType === "error" && data) {
-            const errData = JSON.parse(data) as { message: string };
-            setSendError(errData.message);
+            try {
+              const errData = JSON.parse(data) as { message: string };
+              setSendError(errData.message);
+            } catch (err) {
+              console.warn("[ChatPanel] Failed to parse error chunk:", err);
+            }
           } else if (eventType === "done") {
             break;
           }
         }
       }
     } catch (e) {
-      setSendError(e instanceof Error ? e.message : "Failed to send message");
+      if (!signal.aborted) {
+        setSendError(e instanceof Error ? e.message : "Failed to send message");
+      }
     } finally {
-      setIsSending(false);
-      setStreamingContent("");
-      setOptimisticUserMsg(null);
-      // Refresh conversation to get the saved messages from DB
-      queryClient.invalidateQueries({
-        queryKey: ["chat-conversation", owner, repo, activeConversation],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["chat-conversations", owner, repo],
-      });
+      if (!signal.aborted) {
+        setIsSending(false);
+        setStreamingContent("");
+        setOptimisticUserMsg(null);
+        // Refresh conversation to get the saved messages from DB
+        queryClient.invalidateQueries({
+          queryKey: ["chat-conversation", owner, repo, activeConversation],
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["chat-conversations", owner, repo],
+        });
+      }
     }
   };
 
