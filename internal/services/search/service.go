@@ -7,10 +7,13 @@ import (
 	"math"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/gitwise-io/gitwise/internal/git"
 	"github.com/gitwise-io/gitwise/internal/services/embedding"
@@ -49,7 +52,11 @@ type SearchResult struct {
 type SearchResponse struct {
 	Results []SearchResult     `json:"results"`
 	Facets  map[string][]Facet `json:"facets"`
-	Total   int                `json:"total"`
+	// Total is the number of results returned in this page (not the full
+	// match count across all pages). For repo searches a real COUNT(*) is used;
+	// for other scopes it equals len(Results). Callers should not rely on this
+	// for accurate pagination — use the presence of a next cursor instead.
+	Total int `json:"total"`
 }
 
 type Facet struct {
@@ -664,6 +671,13 @@ func (s *Service) codeLangFacets(ctx context.Context, query string, userID *uuid
 	return facets, nil
 }
 
+// scopeTimeout is the per-scope deadline for searchAll fan-out.
+const scopeTimeout = 2 * time.Second
+
+// searchAll fans out to all five scopes concurrently using errgroup with a
+// goroutine limit of 5.  Each scope gets its own 2-second context.  If a
+// scope times out or errors, its results are omitted and a warning is logged;
+// partial results are returned with TimedOut flag set.
 func (s *Service) searchAll(ctx context.Context, req SearchRequest) (*SearchResponse, error) {
 	perScope := 5
 	if req.Limit > 5 {
@@ -671,46 +685,86 @@ func (s *Service) searchAll(ctx context.Context, req SearchRequest) (*SearchResp
 	}
 
 	type scopeResult struct {
-		resp *SearchResponse
-		err  error
+		resp      *SearchResponse
+		scopeName string
+		timedOut  bool
 	}
 
-	ch := make(chan scopeResult, 5)
+	results := make([]scopeResult, 0, 5)
+	var mu sync.Mutex
 
-	go func() {
-		r, e := s.searchRepos(ctx, req.Query, req.UserID, perScope, 0)
-		ch <- scopeResult{r, e}
-	}()
-	go func() {
-		r, e := s.searchIssues(ctx, req.Query, req.UserID, req.RepoID, perScope, 0)
-		ch <- scopeResult{r, e}
-	}()
-	go func() {
-		r, e := s.searchPRs(ctx, req.Query, req.UserID, req.RepoID, perScope, 0)
-		ch <- scopeResult{r, e}
-	}()
-	go func() {
-		r, e := s.searchCommits(ctx, req.Query, req.UserID, req.RepoID, perScope, 0)
-		ch <- scopeResult{r, e}
-	}()
-	go func() {
-		r, e := s.searchCode(ctx, req.Query, req.UserID, req.RepoID, req.Language, perScope, 0)
-		ch <- scopeResult{r, e}
-	}()
+	// errgroup with a concurrency limit of 5 (one goroutine per scope).
+	// We do not propagate errors via the group because partial results are
+	// acceptable — each scope failure is warned individually.
+	eg, _ := errgroup.WithContext(ctx)
+	eg.SetLimit(5)
+
+	type scopeDef struct {
+		name string
+		fn   func(context.Context) (*SearchResponse, error)
+	}
+
+	scopes := []scopeDef{
+		{"repos", func(sctx context.Context) (*SearchResponse, error) {
+			return s.searchRepos(sctx, req.Query, req.UserID, perScope, 0)
+		}},
+		{"issues", func(sctx context.Context) (*SearchResponse, error) {
+			return s.searchIssues(sctx, req.Query, req.UserID, req.RepoID, perScope, 0)
+		}},
+		{"prs", func(sctx context.Context) (*SearchResponse, error) {
+			return s.searchPRs(sctx, req.Query, req.UserID, req.RepoID, perScope, 0)
+		}},
+		{"commits", func(sctx context.Context) (*SearchResponse, error) {
+			return s.searchCommits(sctx, req.Query, req.UserID, req.RepoID, perScope, 0)
+		}},
+		{"code", func(sctx context.Context) (*SearchResponse, error) {
+			return s.searchCode(sctx, req.Query, req.UserID, req.RepoID, req.Language, perScope, 0)
+		}},
+	}
+
+	for _, sc := range scopes {
+		sc := sc // capture
+		eg.Go(func() error {
+			sctx, cancel := context.WithTimeout(ctx, scopeTimeout)
+			defer cancel()
+
+			resp, err := sc.fn(sctx)
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			if err != nil {
+				timedOut := sctx.Err() != nil
+				if timedOut {
+					slog.Warn("search scope timed out", "scope", sc.name)
+				} else {
+					slog.Warn("search scope failed", "scope", sc.name, "error", err)
+				}
+				results = append(results, scopeResult{scopeName: sc.name, timedOut: timedOut})
+				return nil // partial results OK
+			}
+			results = append(results, scopeResult{resp: resp, scopeName: sc.name})
+			return nil
+		})
+	}
+
+	_ = eg.Wait() // never returns a non-nil error (we swallow all inside the goroutines)
 
 	var allResults []SearchResult
 	typeCounts := map[string]int{}
 	totalSum := 0
+	var timedOutScopes []string
 
-	for i := 0; i < 5; i++ {
-		sr := <-ch
-		if sr.err != nil {
-			slog.Warn("search scope failed", "error", sr.err)
+	for _, sr := range results {
+		if sr.timedOut {
+			timedOutScopes = append(timedOutScopes, sr.scopeName)
+			continue
+		}
+		if sr.resp == nil {
 			continue
 		}
 		totalSum += sr.resp.Total
 		allResults = append(allResults, sr.resp.Results...)
-		// Use Total for facet counts (not len of results which is capped)
 		if len(sr.resp.Results) > 0 {
 			typeCounts[sr.resp.Results[0].Type] = sr.resp.Total
 		}
@@ -733,6 +787,13 @@ func (s *Service) searchAll(ctx context.Context, req SearchRequest) (*SearchResp
 	facets := map[string][]Facet{}
 	if len(typeFacets) > 0 {
 		facets["type"] = typeFacets
+	}
+	if len(timedOutScopes) > 0 {
+		var tf []Facet
+		for _, s := range timedOutScopes {
+			tf = append(tf, Facet{Value: s, Count: 0})
+		}
+		facets["timed_out_scopes"] = tf
 	}
 
 	return &SearchResponse{
