@@ -46,8 +46,14 @@ export function useNotifications() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
   });
 
+  // Keep a stable ref to queryClient so identity changes don't trigger reconnects
+  const queryClientRef = useRef(queryClient);
+  useEffect(() => {
+    queryClientRef.current = queryClient;
+  }, [queryClient]);
+
   const connect = useCallback(() => {
-    if (!isAuthenticated) return;
+    if (!useAuthStore.getState().isAuthenticated) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -63,7 +69,7 @@ export function useNotifications() {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === "notification") {
-          queryClient.invalidateQueries({ queryKey: ["notifications"] });
+          queryClientRef.current.invalidateQueries({ queryKey: ["notifications"] });
         }
       } catch {
         // ignore non-JSON messages
@@ -87,7 +93,8 @@ export function useNotifications() {
     };
 
     wsRef.current = ws;
-  }, [isAuthenticated, queryClient]);
+    // connect is stable — no deps that change on unrelated renders
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (isAuthenticated) {

@@ -56,7 +56,9 @@ export default function IssueListPage() {
         (issuesQuery.data.meta?.next_cursor as string) ?? null,
       );
     }
-  }, [issuesQuery.data]); // eslint-disable-line react-hooks/exhaustive-deps
+    // cursor is included in queryKey so issuesQuery.data already encodes cursor;
+    // reading cursor here is safe — it only drives the append-vs-replace branch.
+  }, [issuesQuery.data, cursor]);
 
   return (
     <div className="repo-page">

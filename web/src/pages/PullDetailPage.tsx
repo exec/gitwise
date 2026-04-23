@@ -164,7 +164,7 @@ export default function PullDetailPage() {
   const submitReview = useMutation({
     mutationFn: (data: { type: string; body: string; comments?: Array<{path: string, line: number, side: string, body: string}> }) =>
       post(`/repos/${owner}/${repo}/pulls/${number}/reviews`, data),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       setReviewBody("");
       setPendingInlineComments([]);
       queryClient.invalidateQueries({
@@ -173,6 +173,12 @@ export default function PullDetailPage() {
       queryClient.invalidateQueries({
         queryKey: ["pull", owner, repo, number],
       });
+      // Invalidate pull-comments when inline comments were included
+      if (variables.comments && variables.comments.length > 0) {
+        queryClient.invalidateQueries({
+          queryKey: ["pull-comments", owner, repo, number],
+        });
+      }
     },
   });
 

@@ -1,28 +1,32 @@
+import { Suspense, lazy } from "react";
 import { Routes, Route, Navigate, useParams } from "react-router-dom";
 import { useAuthStore } from "./stores/auth";
+// Layout and auth guards are eagerly imported (tiny, needed on every render)
 import Layout from "./components/Layout";
-import LandingPage from "./pages/LandingPage";
-import LoginPage from "./pages/LoginPage";
-import RegisterPage from "./pages/RegisterPage";
-import DashboardPage from "./pages/DashboardPage";
-import NewRepoPage from "./pages/NewRepoPage";
-import NewOrgPage from "./pages/NewOrgPage";
-import RepoPage from "./pages/RepoPage";
-import IssueListPage from "./pages/IssueListPage";
-import IssueDetailPage from "./pages/IssueDetailPage";
-import NewIssuePage from "./pages/NewIssuePage";
-import PullListPage from "./pages/PullListPage";
-import PullDetailPage from "./pages/PullDetailPage";
-import NewPullPage from "./pages/NewPullPage";
-import SearchPage from "./pages/SearchPage";
-import EditProfilePage from "./pages/EditProfilePage";
-import OwnerPage from "./pages/OwnerPage";
-import UserSettingsPage from "./pages/UserSettingsPage";
-import RepoSettingsPage from "./pages/RepoSettingsPage";
-import AdminPage from "./pages/AdminPage";
-import ImportPage from "./pages/ImportPage";
-import AgentsTab from "./pages/AgentsTab";
-import NotFoundPage from "./pages/NotFoundPage";
+
+// Page chunks — loaded only when their route is visited
+const LandingPage = lazy(() => import("./pages/LandingPage"));
+const LoginPage = lazy(() => import("./pages/LoginPage"));
+const RegisterPage = lazy(() => import("./pages/RegisterPage"));
+const DashboardPage = lazy(() => import("./pages/DashboardPage"));
+const NewRepoPage = lazy(() => import("./pages/NewRepoPage"));
+const NewOrgPage = lazy(() => import("./pages/NewOrgPage"));
+const RepoPage = lazy(() => import("./pages/RepoPage"));
+const IssueListPage = lazy(() => import("./pages/IssueListPage"));
+const IssueDetailPage = lazy(() => import("./pages/IssueDetailPage"));
+const NewIssuePage = lazy(() => import("./pages/NewIssuePage"));
+const PullListPage = lazy(() => import("./pages/PullListPage"));
+const PullDetailPage = lazy(() => import("./pages/PullDetailPage"));
+const NewPullPage = lazy(() => import("./pages/NewPullPage"));
+const SearchPage = lazy(() => import("./pages/SearchPage"));
+const EditProfilePage = lazy(() => import("./pages/EditProfilePage"));
+const OwnerPage = lazy(() => import("./pages/OwnerPage"));
+const UserSettingsPage = lazy(() => import("./pages/UserSettingsPage"));
+const RepoSettingsPage = lazy(() => import("./pages/RepoSettingsPage"));
+const AdminPage = lazy(() => import("./pages/AdminPage"));
+const ImportPage = lazy(() => import("./pages/ImportPage"));
+const AgentsTab = lazy(() => import("./pages/AgentsTab"));
+const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -54,6 +58,7 @@ function OrgRedirect() {
 export default function App() {
   return (
     <Layout>
+      <Suspense fallback={<div style={{ padding: "2rem", textAlign: "center" }}>Loading...</div>}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
@@ -173,6 +178,7 @@ export default function App() {
         {/* 404 catch-all */}
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
+      </Suspense>
     </Layout>
   );
 }

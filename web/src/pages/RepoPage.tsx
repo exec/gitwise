@@ -220,7 +220,7 @@ export default function RepoPage() {
             <a
               href={`https://github.com/${mirror.github_owner}/${mirror.github_repo}`}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               style={{ color: "#92400e", fontWeight: 600 }}
             >
               github.com/{mirror.github_owner}/{mirror.github_repo}

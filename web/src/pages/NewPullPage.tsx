@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { get, post } from "../lib/api";
 import RepoHeader from "../components/RepoHeader";
 
@@ -28,6 +28,8 @@ export default function NewPullPage() {
   const [intentComponents, setIntentComponents] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Track whether the user has explicitly chosen a target branch
+  const targetBranchSetByUser = useRef(false);
 
   const repoQuery = useQuery({
     queryKey: ["repo", owner, repo],
@@ -43,7 +45,8 @@ export default function NewPullPage() {
   });
 
   useEffect(() => {
-    if (repoQuery.data && !targetBranch) {
+    // Only set default branch if user has not yet made an explicit selection
+    if (repoQuery.data && !targetBranchSetByUser.current) {
       setTargetBranch(repoQuery.data.default_branch);
     }
   }, [repoQuery.data]);
@@ -97,7 +100,10 @@ export default function NewPullPage() {
               id="targetBranch"
               className="form-select"
               value={targetBranch}
-              onChange={(e) => setTargetBranch(e.target.value)}
+              onChange={(e) => {
+                targetBranchSetByUser.current = true;
+                setTargetBranch(e.target.value);
+              }}
             >
               {branchesQuery.data?.map((b) => (
                 <option key={b.name} value={b.name}>

@@ -1,5 +1,10 @@
 const BASE = "/api/v1";
 
+// Maximum number of retries for 5xx responses (not counting the initial attempt)
+const MAX_RETRIES = 2;
+// Base delay in ms for exponential backoff
+const BACKOFF_BASE_MS = 200;
+
 interface ApiErrorEntry {
   code: string;
   message: string;
@@ -24,6 +29,13 @@ export class ApiError extends Error {
   }
 }
 
+/** Returns a jittered delay for retry attempt `n` (0-indexed). */
+function backoffDelay(n: number): number {
+  const base = BACKOFF_BASE_MS * Math.pow(2, n);
+  // Add up to 50% jitter
+  return base + Math.random() * base * 0.5;
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -40,7 +52,15 @@ async function request<T>(
     opts.body = JSON.stringify(body);
   }
 
-  const res = await fetch(`${BASE}${path}`, opts);
+  let res!: Response;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, backoffDelay(attempt - 1)));
+    }
+    res = await fetch(`${BASE}${path}`, opts);
+    // Only retry on 5xx (server errors); 4xx are not retryable
+    if (res.status < 500 || attempt === MAX_RETRIES) break;
+  }
 
   let envelope: ApiEnvelope<T>;
   try {

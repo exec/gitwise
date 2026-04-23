@@ -16,9 +16,15 @@ interface TwoFactorChallenge {
   pending_token: string;
 }
 
-interface LoginResult {
-  requires_2fa?: boolean;
-  pending_token?: string;
+// Discriminated union for the login response
+type LoginResponse =
+  | { requires_2fa: true; pending_token: string }
+  | ({ requires_2fa?: false } & User);
+
+function isTwoFactorResponse(
+  r: LoginResponse,
+): r is { requires_2fa: true; pending_token: string } {
+  return r.requires_2fa === true;
 }
 
 interface AuthState {
@@ -48,13 +54,23 @@ export const useAuthStore = create<AuthState>((set, getState) => ({
   twoFactorChallenge: null,
 
   login: async (login, password) => {
-    const { data } = await post<LoginResult & User>("/auth/login", { login, password });
-    if (data.requires_2fa && data.pending_token) {
+    const { data } = await post<LoginResponse>("/auth/login", { login, password });
+    if (isTwoFactorResponse(data)) {
       set({ twoFactorChallenge: { pending_token: data.pending_token } });
       return;
     }
     // Normal login (no 2FA) - data is the User object.
-    set({ user: data as unknown as User, isAuthenticated: true, twoFactorChallenge: null });
+    const user: User = {
+      id: data.id,
+      username: data.username,
+      email: data.email,
+      full_name: data.full_name,
+      is_admin: data.is_admin,
+      is_bot: data.is_bot,
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+    };
+    set({ user, isAuthenticated: true, twoFactorChallenge: null });
   },
 
   verify2FA: async (code: string) => {

@@ -59,7 +59,7 @@ function StatsCard({ label, value }: { label: string; value: string | number }) 
 }
 
 function DashboardTab() {
-  const { data: stats, isLoading } = useQuery({
+  const { data: stats, isLoading, error } = useQuery({
     queryKey: ["admin-stats"],
     queryFn: async () => {
       const { data } = await get<SystemStats>(`${ADMIN_PREFIX}/stats`);
@@ -68,6 +68,13 @@ function DashboardTab() {
   });
 
   if (isLoading) return <p className="muted">Loading stats...</p>;
+  if (error) {
+    return (
+      <div className="error-banner">
+        {error instanceof Error ? error.message : "Failed to load system stats"}
+      </div>
+    );
+  }
 
   return (
     <div>
