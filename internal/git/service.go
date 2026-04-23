@@ -29,9 +29,24 @@ func NewService(reposPath string) *Service {
 }
 
 // RepoPath returns the filesystem path to a bare repo.
-// Returns ("", error) if the owner or name contains path traversal characters.
+// It validates owner and name before constructing the path and panics if either
+// component is invalid. All public callers (HTTP, SSH handlers) already call
+// ValidatePath before reaching here, so a panic indicates a programming error.
+// Use RepoPathSafe when validation has not yet been done.
 func (s *Service) RepoPath(owner, name string) string {
+	if err := ValidatePath(owner, name); err != nil {
+		panic(fmt.Sprintf("git.RepoPath called with invalid path components: %v", err))
+	}
 	return filepath.Join(s.reposPath, owner, name+".git")
+}
+
+// RepoPathSafe validates owner and name, then returns the filesystem path.
+// It returns an error instead of panicking on invalid components.
+func (s *Service) RepoPathSafe(owner, name string) (string, error) {
+	if err := ValidatePath(owner, name); err != nil {
+		return "", fmt.Errorf("invalid repo path: %w", err)
+	}
+	return filepath.Join(s.reposPath, owner, name+".git"), nil
 }
 
 // ValidatePath checks that owner and repo name are safe path components
