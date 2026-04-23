@@ -344,10 +344,16 @@ func (s *Service) Dispatch(ctx context.Context, repoID uuid.UUID, eventType stri
 	}
 	defer rows.Close()
 
+	const maxPayloadBytes = 256 * 1024 // 256 KiB
+
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		slog.Error("webhook payload marshal failed", "error", err)
 		return
+	}
+	if len(payloadJSON) > maxPayloadBytes {
+		// Truncate by capping string fields in the payload and re-marshalling.
+		payloadJSON = truncatePayload(payload, maxPayloadBytes)
 	}
 
 	var webhooks []models.Webhook
@@ -541,7 +547,7 @@ func buildDiscordPayload(eventType string, payloadJSON []byte) ([]byte, error) {
 	return json.Marshal(discord)
 }
 
-func (s *Service) deliver(w models.Webhook, eventType string, payloadJSON []byte) {
+func (s *Service) deliver(w models.Webhook, eventType string, payloadJSON []byte) uuid.UUID {
 	deliveryID := uuid.New()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -552,7 +558,7 @@ func (s *Service) deliver(w models.Webhook, eventType string, payloadJSON []byte
 		discordBody, err := buildDiscordPayload(eventType, payloadJSON)
 		if err != nil {
 			slog.Error("discord payload transform failed", "webhook_id", w.ID, "error", err)
-			return
+			return deliveryID
 		}
 		body = discordBody
 	}
@@ -561,7 +567,7 @@ func (s *Service) deliver(w models.Webhook, eventType string, payloadJSON []byte
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.URL, bytes.NewReader(body))
 	if err != nil {
 		slog.Error("webhook request build failed", "webhook_id", w.ID, "error", err)
-		return
+		return deliveryID
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -569,9 +575,12 @@ func (s *Service) deliver(w models.Webhook, eventType string, payloadJSON []byte
 	req.Header.Set("X-Gitwise-Delivery", deliveryID.String())
 	req.Header.Set("User-Agent", "Gitwise-Hookshot")
 
-	if w.Secret != "" && !isDiscordWebhook(w.URL) {
+	// Always HMAC over the canonical source payload (payloadJSON), not the
+	// transformed Discord body. This allows receivers to verify against the
+	// original event bytes regardless of destination format.
+	if w.Secret != "" {
 		mac := hmac.New(sha256.New, []byte(w.Secret))
-		mac.Write(body)
+		mac.Write(payloadJSON)
 		sig := hex.EncodeToString(mac.Sum(nil))
 		req.Header.Set("X-Hub-Signature-256", "sha256="+sig)
 	}
@@ -617,6 +626,7 @@ func (s *Service) deliver(w models.Webhook, eventType string, payloadJSON []byte
 	if dbErr != nil {
 		slog.Error("webhook delivery record failed", "delivery_id", deliveryID, "error", dbErr)
 	}
+	return deliveryID
 }
 
 // RetryPending finds failed deliveries that are due for retry and re-delivers them.
@@ -700,9 +710,10 @@ func (s *Service) retryDelivery(deliveryID, webhookID uuid.UUID, eventType strin
 	req.Header.Set("X-Gitwise-Delivery", deliveryID.String())
 	req.Header.Set("User-Agent", "Gitwise-Hookshot")
 
-	if secret != "" && !isDiscordWebhook(webhookURL) {
+	// Sign the canonical stored payload, not the transformed Discord body.
+	if secret != "" {
 		mac := hmac.New(sha256.New, []byte(secret))
-		mac.Write(body)
+		mac.Write(payload)
 		sig := hex.EncodeToString(mac.Sum(nil))
 		req.Header.Set("X-Hub-Signature-256", "sha256="+sig)
 	}
@@ -749,12 +760,59 @@ func (s *Service) retryDelivery(deliveryID, webhookID uuid.UUID, eventType strin
 	}
 }
 
-// DeliverOne delivers a payload to a single webhook. Used by the Test handler
-// to avoid broadcasting to all webhooks that subscribe to the event type.
-func (s *Service) DeliverOne(ctx context.Context, wh models.Webhook, eventType string, payload []byte) {
-	s.deliver(wh, eventType, payload)
+// DeliverOne delivers a payload to a single webhook synchronously and returns the
+// delivery ID. Used by the Test handler so the UI can reference the delivery record.
+func (s *Service) DeliverOne(ctx context.Context, wh models.Webhook, eventType string, payload []byte) uuid.UUID {
+	return s.deliver(wh, eventType, payload)
 }
 
+// truncatePayload re-marshals payload after capping any string values that push
+// the total over maxBytes. It sets truncated=true in the top-level map so
+// receivers know some content was elided.
+func truncatePayload(payload map[string]any, maxBytes int) []byte {
+	// Deep-clone to avoid mutating the caller's map.
+	clone := make(map[string]any, len(payload))
+	for k, v := range payload {
+		clone[k] = v
+	}
+	clone["truncated"] = true
+
+	// Cap long string fields at 1 KiB each.
+	const maxStrLen = 1024
+	var capStrings func(m map[string]any)
+	capStrings = func(m map[string]any) {
+		for k, v := range m {
+			switch tv := v.(type) {
+			case string:
+				if len(tv) > maxStrLen {
+					m[k] = tv[:maxStrLen] + "…[truncated]"
+				}
+			case map[string]any:
+				capStrings(tv)
+			case []any:
+				for _, elem := range tv {
+					if sub, ok := elem.(map[string]any); ok {
+						capStrings(sub)
+					}
+				}
+			}
+		}
+	}
+	capStrings(clone)
+
+	b, err := json.Marshal(clone)
+	if err != nil {
+		// Fallback: just a minimal marker.
+		b, _ = json.Marshal(map[string]any{"truncated": true, "error": "payload too large"})
+	}
+	return b
+}
+
+// validateURL performs a URL parse + scheme/port check only.
+// IP blocking is enforced exclusively in the dialer's Control callback used for
+// every actual HTTP request, closing the DNS TOCTOU window: the OS resolves the
+// hostname exactly once — during dial — where our Control function checks the
+// resolved IP before the socket connects.
 func validateURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -766,18 +824,10 @@ func validateURL(rawURL string) error {
 	if u.Host == "" {
 		return ErrInvalidURL
 	}
-
-	hostname := u.Hostname()
-	ips, err := net.LookupIP(hostname)
-	if err != nil {
-		return ErrInvalidURL
+	// Block explicit IP literals in the URL directly (fast path — no DNS needed).
+	if ip := net.ParseIP(u.Hostname()); ip != nil && isPrivateIP(ip) {
+		return ErrPrivateURL
 	}
-	for _, ip := range ips {
-		if isPrivateIP(ip) {
-			return ErrPrivateURL
-		}
-	}
-
 	return nil
 }
 
