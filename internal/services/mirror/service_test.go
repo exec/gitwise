@@ -72,3 +72,30 @@ func TestLockForReturnsSameMutexPerRepo(t *testing.T) {
 		t.Fatal("lockFor returned same mutex for different repos")
 	}
 }
+
+// TestRunDue_SkipsIfAlreadyRunning verifies that RunDue returns nil immediately
+// when a previous tick is still executing (via the global TryLock guard).
+func TestRunDue_SkipsIfAlreadyRunning(t *testing.T) {
+	// Acquire the global runDueMu to simulate a running tick.
+	if !runDueMu.TryLock() {
+		t.Skip("runDueMu already locked — concurrent test interference")
+	}
+	defer runDueMu.Unlock()
+
+	svc := newTestService(t)
+	// RunDue must return nil immediately since runDueMu is held.
+	result := svc.RunDue(context.Background())
+	if result != nil {
+		t.Errorf("RunDue() = %v; want nil (skipped)", result)
+	}
+}
+
+// TestRunDue_Constants verifies the semaphore and timeout constants are sensible.
+func TestRunDue_Constants(t *testing.T) {
+	if runDueMaxInflight <= 0 {
+		t.Errorf("runDueMaxInflight must be positive, got %d", runDueMaxInflight)
+	}
+	if runDueSyncTimeout <= 0 {
+		t.Error("runDueSyncTimeout must be positive")
+	}
+}
