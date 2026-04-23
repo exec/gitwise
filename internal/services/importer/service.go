@@ -3,9 +3,12 @@ package importer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,12 +26,13 @@ import (
 
 // ImportStatus tracks the state of an import job.
 type ImportStatus struct {
-	ID       string `json:"id"`
-	Status   string `json:"status"`   // running, completed, failed
-	Progress string `json:"progress"` // human-readable progress message
-	RepoName string `json:"repo_name"`
-	Error    string `json:"error,omitempty"`
-	Warnings []string `json:"warnings,omitempty"`
+	ID       string    `json:"id"`
+	UserID   string    `json:"user_id"` // owner of this job; used for auth
+	Status   string    `json:"status"`   // running, completed, failed
+	Progress string    `json:"progress"` // human-readable progress message
+	RepoName string    `json:"repo_name"`
+	Error    string    `json:"error,omitempty"`
+	Warnings []string  `json:"warnings,omitempty"`
 }
 
 // GitHubImportRequest is the input for a GitHub import.
@@ -87,6 +91,7 @@ type externalComment struct {
 
 // Service manages repository imports from external platforms.
 type Service struct {
+	ctx        context.Context // app-level context; cancellation stops background goroutines
 	db         *pgxpool.Pool
 	rdb        *redis.Client
 	gitSvc     *git.Service
@@ -96,8 +101,11 @@ type Service struct {
 	commentSvc *comment.Service
 }
 
-// NewService creates a new import service.
+// NewService creates a new import service. The provided ctx should be the
+// application context so that background import goroutines are cancelled on
+// shutdown.
 func NewService(
+	ctx context.Context,
 	db *pgxpool.Pool,
 	rdb *redis.Client,
 	gitSvc *git.Service,
@@ -107,6 +115,7 @@ func NewService(
 	commentSvc *comment.Service,
 ) *Service {
 	return &Service{
+		ctx:        ctx,
 		db:         db,
 		rdb:        rdb,
 		gitSvc:     gitSvc,
@@ -123,14 +132,22 @@ const (
 )
 
 // GetStatus retrieves the status of an import job from Redis.
-func (s *Service) GetStatus(ctx context.Context, jobID string) (*ImportStatus, error) {
+// It returns the status only if it belongs to the given userID.
+// Returns (nil, ErrNotFound) when the job doesn't exist or belongs to another user.
+var ErrNotFound = errors.New("import job not found")
+
+func (s *Service) GetStatus(ctx context.Context, jobID string, userID uuid.UUID) (*ImportStatus, error) {
 	data, err := s.rdb.Get(ctx, statusKeyPrefix+jobID).Result()
 	if err != nil {
-		return nil, fmt.Errorf("get import status: %w", err)
+		return nil, ErrNotFound
 	}
 	var status ImportStatus
 	if err := json.Unmarshal([]byte(data), &status); err != nil {
 		return nil, fmt.Errorf("unmarshal import status: %w", err)
+	}
+	// Enforce ownership: return 404 (not 403) so callers can't enumerate job IDs.
+	if status.UserID != userID.String() {
+		return nil, ErrNotFound
 	}
 	return &status, nil
 }
@@ -156,13 +173,14 @@ func (s *Service) StartGitHubImport(ctx context.Context, userID uuid.UUID, req G
 	jobID := uuid.New().String()
 	status := &ImportStatus{
 		ID:       jobID,
+		UserID:   userID.String(),
 		Status:   "running",
 		Progress: "Starting GitHub import...",
 		RepoName: repoName,
 	}
 	s.setStatus(ctx, status)
 
-	go s.runGitHubImport(userID, jobID, req.Token, owner, repoName, req.Visibility)
+	go s.runGitHubImport(s.ctx, userID, jobID, req.Token, owner, repoName, req.Visibility)
 
 	return jobID, nil
 }
@@ -182,21 +200,21 @@ func (s *Service) StartGitLabImport(ctx context.Context, userID uuid.UUID, req G
 	jobID := uuid.New().String()
 	status := &ImportStatus{
 		ID:       jobID,
+		UserID:   userID.String(),
 		Status:   "running",
 		Progress: "Starting GitLab import...",
 		RepoName: projectName,
 	}
 	s.setStatus(ctx, status)
 
-	go s.runGitLabImport(userID, jobID, req.Token, instanceURL, namespace, projectName, req.Visibility)
+	go s.runGitLabImport(s.ctx, userID, jobID, req.Token, instanceURL, namespace, projectName, req.Visibility)
 
 	return jobID, nil
 }
 
-func (s *Service) runGitHubImport(userID uuid.UUID, jobID, token, owner, repoName, visibility string) {
-	ctx := context.Background()
+func (s *Service) runGitHubImport(ctx context.Context, userID uuid.UUID, jobID, token, owner, repoName, visibility string) {
 	log := slog.With("job_id", jobID, "source", "github", "repo", owner+"/"+repoName)
-	status := &ImportStatus{ID: jobID, Status: "running", RepoName: repoName}
+	status := &ImportStatus{ID: jobID, UserID: userID.String(), Status: "running", RepoName: repoName}
 	var warnings []string
 
 	defer func() {
@@ -225,8 +243,8 @@ func (s *Service) runGitHubImport(userID uuid.UUID, jobID, token, owner, repoNam
 	status.Progress = "Cloning git repository..."
 	s.setStatus(ctx, status)
 
-	cloneURL := fmt.Sprintf("https://%s@github.com/%s/%s.git", token, owner, repoName)
-	if err := s.cloneBare(ctx, userID, repoName, cloneURL); err != nil {
+	cloneURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, repoName)
+	if err := s.cloneBare(ctx, userID, repoName, cloneURL, token); err != nil {
 		status.Status = "failed"
 		status.Error = fmt.Sprintf("Failed to clone repository: %v", err)
 		s.setStatus(ctx, status)
@@ -311,10 +329,9 @@ func (s *Service) runGitHubImport(userID uuid.UUID, jobID, token, owner, repoNam
 	log.Info("github import completed", "repo", repoName, "warnings", len(warnings))
 }
 
-func (s *Service) runGitLabImport(userID uuid.UUID, jobID, token, instanceURL, namespace, projectName, visibility string) {
-	ctx := context.Background()
+func (s *Service) runGitLabImport(ctx context.Context, userID uuid.UUID, jobID, token, instanceURL, namespace, projectName, visibility string) {
 	log := slog.With("job_id", jobID, "source", "gitlab", "project", namespace+"/"+projectName)
-	status := &ImportStatus{ID: jobID, Status: "running", RepoName: projectName}
+	status := &ImportStatus{ID: jobID, UserID: userID.String(), Status: "running", RepoName: projectName}
 	var warnings []string
 
 	defer func() {
@@ -343,10 +360,9 @@ func (s *Service) runGitLabImport(userID uuid.UUID, jobID, token, instanceURL, n
 	status.Progress = "Cloning git repository..."
 	s.setStatus(ctx, status)
 
-	// Use the HTTP clone URL with token auth
+	// Use the HTTP clone URL; token is supplied via GIT_ASKPASS (never in URL).
 	cloneURL := fmt.Sprintf("%s/%s/%s.git", instanceURL, namespace, projectName)
-	cloneURL = strings.Replace(cloneURL, "://", fmt.Sprintf("://oauth2:%s@", token), 1)
-	if err := s.cloneBare(ctx, userID, projectName, cloneURL); err != nil {
+	if err := s.cloneBare(ctx, userID, projectName, cloneURL, token); err != nil {
 		status.Status = "failed"
 		status.Error = fmt.Sprintf("Failed to clone repository: %v", err)
 		s.setStatus(ctx, status)
@@ -430,7 +446,9 @@ func (s *Service) runGitLabImport(userID uuid.UUID, jobID, token, instanceURL, n
 }
 
 // cloneBare clones a remote repository as a bare repo into the gitwise repos directory.
-func (s *Service) cloneBare(ctx context.Context, userID uuid.UUID, repoName, cloneURL string) error {
+// If pat is non-empty it is supplied via a GIT_ASKPASS helper so it never appears
+// in the URL, command arguments, or any log output.
+func (s *Service) cloneBare(ctx context.Context, userID uuid.UUID, repoName, cloneURL, pat string) error {
 	var ownerName string
 	if err := s.db.QueryRow(ctx, `SELECT username FROM users WHERE id = $1`, userID).Scan(&ownerName); err != nil {
 		return fmt.Errorf("lookup owner: %w", err)
@@ -438,10 +456,42 @@ func (s *Service) cloneBare(ctx context.Context, userID uuid.UUID, repoName, clo
 
 	destPath := s.gitSvc.RepoPath(ownerName, repoName)
 
+	// Build env, optionally injecting a GIT_ASKPASS helper.
+	env := make([]string, 0, len(os.Environ())+3)
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "GITWISE_IMPORT_PAT=") {
+			continue // strip any stale value
+		}
+		env = append(env, e)
+	}
+	env = append(env, "GIT_TERMINAL_PROMPT=0")
+
+	var askpassDir string
+	if pat != "" {
+		dir, err := os.MkdirTemp("", "gitwise-import-askpass-*")
+		if err != nil {
+			return fmt.Errorf("mktemp askpass dir: %w", err)
+		}
+		defer os.RemoveAll(dir)
+		askpassDir = dir
+
+		askpass := filepath.Join(dir, "askpass.sh")
+		if err := os.WriteFile(askpass, []byte("#!/bin/sh\nexec printenv GITWISE_IMPORT_PAT\n"), 0o700); err != nil {
+			return fmt.Errorf("write askpass script: %w", err)
+		}
+		env = append(env,
+			"GIT_ASKPASS="+askpass,
+			"GITWISE_IMPORT_PAT="+pat,
+		)
+	}
+	_ = askpassDir // used via defer cleanup above
+
 	cmd := exec.CommandContext(ctx, "git", "clone", "--bare", cloneURL, destPath)
-	cmd.Env = append(cmd.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = env
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git clone --bare: %w: %s", err, string(output))
+		// Do NOT include output in the error in case it contains credential hints.
+		slog.Error("git clone --bare failed", "repo", repoName, "output_length", len(output))
+		return fmt.Errorf("git clone --bare: %w", err)
 	}
 	return nil
 }

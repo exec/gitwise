@@ -287,7 +287,7 @@ func (s *Server) initServices() {
 	s.commitIndexer = commit.NewIndexer(s.db, s.gitSvc)
 
 	// Import service + handler
-	s.importSvc = importer.NewService(s.db, s.rdb, s.gitSvc, s.repoSvc, s.issueSvc, s.pullSvc, s.commentSvc)
+	s.importSvc = importer.NewService(context.Background(), s.db, s.rdb, s.gitSvc, s.repoSvc, s.issueSvc, s.pullSvc, s.commentSvc)
 	s.importHandler = handlers.NewImportHandler(s.importSvc)
 
 	// Agent service + handler

@@ -162,7 +162,11 @@ func (h *AdminHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 
 	// Augment with repo count
 	var repoCount int
-	h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM repositories WHERE owner_id = $1`, id).Scan(&repoCount)
+	if err := h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM repositories WHERE owner_id = $1`, id).Scan(&repoCount); err != nil {
+		slog.Error("admin: failed to count repos for user", "user_id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "server_error", "failed to get user details")
+		return
+	}
 
 	type adminUserDetail struct {
 		ID        uuid.UUID `json:"id"`

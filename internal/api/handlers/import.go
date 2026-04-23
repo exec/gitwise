@@ -91,14 +91,22 @@ func (h *ImportHandler) ImportGitLab(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetImportStatus returns the current status of an import job.
+// The job must belong to the authenticated user; otherwise 404 is returned
+// so callers cannot enumerate job IDs.
 func (h *ImportHandler) GetImportStatus(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	if userID == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "not authenticated")
+		return
+	}
+
 	jobID := chi.URLParam(r, "id")
 	if jobID == "" {
 		writeError(w, http.StatusBadRequest, "required", "job ID is required")
 		return
 	}
 
-	status, err := h.importSvc.GetStatus(r.Context(), jobID)
+	status, err := h.importSvc.GetStatus(r.Context(), jobID, *userID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "import job not found")
 		return

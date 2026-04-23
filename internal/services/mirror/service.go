@@ -370,10 +370,29 @@ func (s *Service) finishRun(
 	}, nil
 }
 
+const (
+	// runDueSyncTimeout is the per-sync timeout applied to each RunDue goroutine.
+	runDueSyncTimeout = 10 * time.Minute
+	// runDueMaxInflight caps concurrent goroutines spawned by RunDue.
+	runDueMaxInflight = 5
+)
+
+// runDueMu is a tryLock guard so that if a previous RunDue tick's goroutines
+// are still running, the new tick skips entirely rather than piling on.
+var runDueMu sync.Mutex
+
 // RunDue dispatches all mirrors whose next_run_at has passed, up to 50 per call.
-// Each mirror is synced concurrently; per-repo mutex in SyncNow keeps same-repo
-// calls serialized. The call blocks until every dispatched sync has finished.
+// Each mirror is synced concurrently, bounded by runDueMaxInflight. Each sync is
+// wrapped in a per-sync timeout (runDueSyncTimeout). If a previous RunDue call
+// has not completed, the new tick is skipped.
+// The call blocks until every dispatched sync has finished.
 func (s *Service) RunDue(ctx context.Context) []SyncResult {
+	if !runDueMu.TryLock() {
+		slog.Warn("mirror: RunDue skipped — previous tick still running")
+		return nil
+	}
+	defer runDueMu.Unlock()
+
 	rows, err := s.db.Query(ctx, `
 		SELECT repo_id FROM repo_mirrors
 		WHERE interval_seconds > 0
@@ -402,13 +421,19 @@ func (s *Service) RunDue(ctx context.Context) []SyncResult {
 		return nil
 	}
 
+	sem := make(chan struct{}, runDueMaxInflight)
 	var wg sync.WaitGroup
 	resultsCh := make(chan SyncResult, len(ids))
 	for _, id := range ids {
 		wg.Add(1)
+		sem <- struct{}{}
 		go func(id uuid.UUID) {
 			defer wg.Done()
-			r, err := s.SyncNow(ctx, id, models.MirrorTriggerScheduled)
+			defer func() { <-sem }()
+			// Each sync gets its own bounded timeout.
+			syncCtx, cancel := context.WithTimeout(ctx, runDueSyncTimeout)
+			defer cancel()
+			r, err := s.SyncNow(syncCtx, id, models.MirrorTriggerScheduled)
 			switch {
 			case err != nil:
 				// Surface failures in the aggregate result so the worker can log them.

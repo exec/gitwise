@@ -85,7 +85,7 @@ func (h *BrowseHandler) GetRawBlob(w http.ResponseWriter, r *http.Request) {
 
 	repository, err := h.repos.GetByOwnerAndName(r.Context(), owner, repoName, middleware.GetUserID(r.Context()))
 	if err != nil {
-		http.NotFound(w, r)
+		writeError(w, http.StatusNotFound, "not_found", "repository not found")
 		return
 	}
 
@@ -95,7 +95,7 @@ func (h *BrowseHandler) GetRawBlob(w http.ResponseWriter, r *http.Request) {
 
 	blob, err := h.git.GetBlob(owner, repoName, ref, filePath)
 	if err != nil {
-		http.NotFound(w, r)
+		writeError(w, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
 

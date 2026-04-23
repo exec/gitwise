@@ -195,6 +195,39 @@ func TestHandleDecodeError_OtherError(t *testing.T) {
 	}
 }
 
+func TestParseLimit(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		defaultV int
+		max      int
+		want     int
+	}{
+		{"missing param returns default", "", 25, 100, 25},
+		{"zero returns default", "0", 25, 100, 25},
+		{"negative returns default", "-5", 25, 100, 25},
+		{"non-numeric returns default", "abc", 25, 100, 25},
+		{"valid within range", "50", 25, 100, 50},
+		{"exactly max is allowed", "100", 25, 100, 100},
+		{"over max is clamped to max", "999", 25, 100, 100},
+		{"one is valid", "1", 25, 100, 1},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			url := "/"
+			if tc.query != "" {
+				url = "/?limit=" + tc.query
+			}
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+			got := parseLimit(req, tc.defaultV, tc.max)
+			if got != tc.want {
+				t.Errorf("parseLimit(%q, %d, %d) = %d; want %d", tc.query, tc.defaultV, tc.max, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWriteUserJSON(t *testing.T) {
 	rec := httptest.NewRecorder()
 	WriteUserJSON(rec, map[string]string{"name": "test"})
