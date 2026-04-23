@@ -78,7 +78,9 @@ func (s *Service) Create(ctx context.Context, prID, authorID uuid.UUID, req mode
 	}
 
 	// Update review summary on the PR
-	s.updateReviewSummary(ctx, prID)
+	if err := s.updateReviewSummary(ctx, prID); err != nil {
+		return nil, fmt.Errorf("update review summary: %w", err)
+	}
 
 	return review, nil
 }
@@ -136,11 +138,13 @@ func (s *Service) ResolveThread(ctx context.Context, prID uuid.UUID, threadID st
 		return ErrThreadNotFound
 	}
 
-	s.updateReviewSummary(ctx, prID)
+	if err := s.updateReviewSummary(ctx, prID); err != nil {
+		return fmt.Errorf("update review summary: %w", err)
+	}
 	return nil
 }
 
-func (s *Service) updateReviewSummary(ctx context.Context, prID uuid.UUID) {
+func (s *Service) updateReviewSummary(ctx context.Context, prID uuid.UUID) error {
 	rows, err := s.db.Query(ctx, `
 		SELECT DISTINCT ON (r.author_id) u.username, r.type
 		FROM reviews r
@@ -149,8 +153,7 @@ func (s *Service) updateReviewSummary(ctx context.Context, prID uuid.UUID) {
 		ORDER BY r.author_id, r.submitted_at DESC`, prID,
 	)
 	if err != nil {
-		slog.Error("update review summary: query failed", "pr_id", prID, "error", err)
-		return
+		return fmt.Errorf("update review summary: query reviews: %w", err)
 	}
 	defer rows.Close()
 
@@ -159,8 +162,7 @@ func (s *Service) updateReviewSummary(ctx context.Context, prID uuid.UUID) {
 	for rows.Next() {
 		var username, reviewType string
 		if err := rows.Scan(&username, &reviewType); err != nil {
-			slog.Error("update review summary: scan failed", "pr_id", prID, "error", err)
-			continue
+			return fmt.Errorf("update review summary: scan review: %w", err)
 		}
 		switch reviewType {
 		case "approval":
@@ -170,17 +172,17 @@ func (s *Service) updateReviewSummary(ctx context.Context, prID uuid.UUID) {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		slog.Error("update review summary: iterate failed", "pr_id", prID, "error", err)
+		return fmt.Errorf("update review summary: iterate reviews: %w", err)
 	}
 
 	var reviewsCount int
 	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM reviews WHERE pr_id = $1`, prID).Scan(&reviewsCount); err != nil {
-		slog.Error("update review summary: reviews count failed", "pr_id", prID, "error", err)
+		return fmt.Errorf("update review summary: count reviews: %w", err)
 	}
 
 	var commentsCount int
 	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM comments WHERE pr_id = $1`, prID).Scan(&commentsCount); err != nil {
-		slog.Error("update review summary: comments count failed", "pr_id", prID, "error", err)
+		return fmt.Errorf("update review summary: count comments: %w", err)
 	}
 
 	// Count thread resolution status across all reviews for this PR
@@ -196,8 +198,9 @@ func (s *Service) updateReviewSummary(ctx context.Context, prID uuid.UUID) {
 	})
 
 	if _, err := s.db.Exec(ctx, `UPDATE pull_requests SET review_summary = $2, updated_at = now() WHERE id = $1`, prID, summary); err != nil {
-		slog.Error("update review summary: update failed", "pr_id", prID, "error", err)
+		return fmt.Errorf("update review summary: update pull_request: %w", err)
 	}
+	return nil
 }
 
 func (s *Service) countThreads(ctx context.Context, prID uuid.UUID) (resolved int, unresolved int) {
