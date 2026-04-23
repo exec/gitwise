@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -173,7 +174,7 @@ func (s *Service) AddMessage(ctx context.Context, convID uuid.UUID, role, conten
 		msg.CreatedAt, convID)
 	if err != nil {
 		// Non-fatal: log but don't fail
-		fmt.Printf("failed to update conversation timestamp: %v\n", err)
+		slog.Warn("chat: failed to update conversation timestamp", "conv_id", convID, "error", err)
 	}
 
 	return msg, nil
