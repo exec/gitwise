@@ -3,7 +3,6 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -24,7 +23,7 @@ func NewRepoHandler(repos *repo.Service, orgSvc *org.Service) *RepoHandler {
 
 func (h *RepoHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r.Context())
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit := parseLimit(r, 30, 100)
 
 	if userID != nil {
 		repos, err := h.repos.ListForUser(r.Context(), *userID, limit)
@@ -107,7 +106,7 @@ func (h *RepoHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *RepoHandler) ListByOwner(w http.ResponseWriter, r *http.Request) {
 	owner := chi.URLParam(r, "owner")
 	viewerID := middleware.GetUserID(r.Context())
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit := parseLimit(r, 30, 100)
 
 	repos, err := h.repos.ListByOwner(r.Context(), owner, viewerID, limit)
 	if err != nil {
@@ -124,7 +123,7 @@ func (h *RepoHandler) ListMine(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "not authenticated")
 		return
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit := parseLimit(r, 30, 100)
 
 	repos, err := h.repos.ListForUser(r.Context(), *userID, limit)
 	if err != nil {

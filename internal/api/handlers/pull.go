@@ -127,7 +127,7 @@ func (h *PullHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	status := r.URL.Query().Get("status")
 	cursor := r.URL.Query().Get("cursor")
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit := parseLimit(r, 25, 100)
 
 	prs, nextCursor, err := h.pulls.List(r.Context(), repository.ID, status, cursor, limit)
 	if err != nil {
@@ -564,7 +564,7 @@ func (h *PullHandler) ListComments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cursor := r.URL.Query().Get("cursor")
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit := parseLimit(r, 25, 100)
 	comments, nextCursor, err := h.comments.ListByPR(r.Context(), pr.ID, cursor, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to list comments")

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 
@@ -53,6 +54,23 @@ func writeFieldError(w http.ResponseWriter, status int, code, message, field str
 
 const maxBodySize = 1 << 20 // 1 MB
 
+// parseLimit parses an integer "limit" query parameter, clamping it to [defaultV, max].
+// A missing, zero, or negative value returns defaultV; a value above max returns max.
+func parseLimit(r *http.Request, defaultV, max int) int {
+	s := r.URL.Query().Get("limit")
+	if s == "" {
+		return defaultV
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v <= 0 {
+		return defaultV
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
+
 func decodeJSON(r *http.Request, v any) error {
 	r.Body = http.MaxBytesReader(nil, r.Body, maxBodySize)
 	dec := json.NewDecoder(r.Body)
@@ -66,6 +84,44 @@ func decodeJSON(r *http.Request, v any) error {
 		}
 	}
 	return err
+}
+
+// decodeJSONObject decodes a JSON object body, rejecting non-object top-level values
+// (arrays, strings, numbers, booleans). Uses the same size limit as decodeJSON.
+func decodeJSONObject(r *http.Request, v any) error {
+	r.Body = http.MaxBytesReader(nil, r.Body, maxBodySize)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	// Peek at first token to ensure it's an object.
+	tok, err := dec.Token()
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return ErrBodyTooLarge
+		}
+		return err
+	}
+	delim, ok := tok.(json.Delim)
+	if !ok || delim != '{' {
+		return fmt.Errorf("request body must be a JSON object")
+	}
+
+	// Decode the rest of the object into v using a fresh decoder that sees the whole body.
+	// We can't rewind, so use the existing decoder which has consumed the '{' — rebuild v
+	// by wrapping in a map and decoding manually is complex; instead unmarshal via buffered approach.
+	// Simpler: use a raw message to decode the complete object via standard Unmarshal.
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return ErrBodyTooLarge
+		}
+		return err
+	}
+	// Reconstruct the full object for final decode.
+	fullObj := append([]byte{'{'}, raw...)
+	return json.Unmarshal(fullObj, v)
 }
 
 // handleDecodeError writes the appropriate error for a decodeJSON failure.

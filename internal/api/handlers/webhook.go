@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -188,12 +187,7 @@ func (h *WebhookHandler) ListDeliveries(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	limit := 25
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil {
-			limit = parsed
-		}
-	}
+	limit := parseLimit(r, 25, 100)
 
 	deliveries, err := h.webhooks.ListDeliveries(r.Context(), webhookID, limit)
 	if err != nil {
@@ -241,7 +235,10 @@ func (h *WebhookHandler) Test(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.webhooks.DeliverOne(r.Context(), *wh, "ping", payloadJSON)
+	deliveryID := h.webhooks.DeliverOne(r.Context(), *wh, "ping", payloadJSON)
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ping sent"})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":      "ping sent",
+		"delivery_id": deliveryID.String(),
+	})
 }

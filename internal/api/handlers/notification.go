@@ -3,7 +3,6 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -31,7 +30,7 @@ func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	unreadOnly := r.URL.Query().Get("unread_only") == "true"
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit := parseLimit(r, 25, 100)
 
 	notifications, err := h.notifications.ListForUser(r.Context(), *userID, unreadOnly, limit)
 	if err != nil {
