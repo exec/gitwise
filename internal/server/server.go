@@ -428,6 +428,91 @@ func (s *Server) initServices() {
 	}
 	s.gitHTTP.IsPullMirror = isPullMirror
 	s.gitSSH.IsPullMirror = isPullMirror
+
+	// CRITICAL 1: Enforce visibility on smart-HTTP read operations.
+	// Anonymous access is allowed only for public repos; private repos require
+	// credentials with at least read permission.
+	s.gitHTTP.CheckReadAccess = func(username, owner, repoName string) bool {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return s.checkHTTPReadAccess(ctx, username, owner, repoName)
+	}
+
+	// CRITICAL 2: Enforce branch protection before git-receive-pack executes.
+	// We parse the pkt-line ref updates from the client body in the HTTP layer,
+	// look up matching protection rules, and reject the push before git runs.
+	// This is cleaner than installing on-disk hook scripts and is fully testable.
+	s.gitHTTP.PreReceiveHook = func(username, owner, repoName, branch, oldSHA, newSHA string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return s.checkBranchProtection(ctx, owner, repoName, branch)
+	}
+}
+
+// checkHTTPReadAccess mirrors checkSSHAccess for HTTP read operations.
+// username is empty for anonymous requests; in that case only public repos pass.
+func (s *Server) checkHTTPReadAccess(ctx context.Context, username, owner, repoName string) bool {
+	if err := git.ValidatePath(owner, repoName); err != nil {
+		return false
+	}
+
+	var viewerID *uuid.UUID
+	if username != "" {
+		u, err := s.userSvc.GetByUsername(ctx, username)
+		if err == nil {
+			viewerID = &u.ID
+		}
+	}
+
+	repo, err := s.repoSvc.GetByOwnerAndName(ctx, owner, repoName, viewerID)
+	if err != nil {
+		// Not found or access denied by repo service.
+		return false
+	}
+
+	// Public repos are world-readable.
+	if repo.Visibility == "public" {
+		return true
+	}
+
+	// Private repo — require authenticated user with at least some access.
+	// GetByOwnerAndName already checks that the viewerID has access to the repo
+	// (owner, org member, collaborator). If it returned without error, access is granted.
+	return viewerID != nil
+}
+
+// checkBranchProtection evaluates branch protection rules for an incoming push.
+func (s *Server) checkBranchProtection(ctx context.Context, owner, repoName, branch string) error {
+	// Look up the repo ID.
+	var repoID uuid.UUID
+	err := s.db.QueryRow(ctx, `
+		SELECT r.id FROM repositories r
+		LEFT JOIN users u ON r.owner_id = u.id AND r.owner_type = 'user'
+		LEFT JOIN organizations o ON r.owner_id = o.id AND r.owner_type = 'org'
+		WHERE LOWER(COALESCE(u.username, o.name)) = LOWER($1) AND r.name = $2`,
+		owner, repoName).Scan(&repoID)
+	if err != nil {
+		// Can't find repo — don't block the push (fail open for DB errors).
+		slog.Warn("pre-receive: repo lookup failed, skipping protection check",
+			"owner", owner, "repo", repoName, "error", err)
+		return nil
+	}
+
+	rule, err := s.protectionSvc.Check(ctx, repoID, branch)
+	if err != nil {
+		slog.Warn("pre-receive: protection check failed, skipping",
+			"owner", owner, "repo", repoName, "branch", branch, "error", err)
+		return nil
+	}
+	if rule == nil {
+		return nil // no matching protection rule
+	}
+
+	// Branch is protected — reject the direct push.
+	// Required-reviews enforcement happens at PR merge time; here we block
+	// force-pushes and direct commits to protected branches entirely.
+	return fmt.Errorf("protected branch %q cannot be pushed to directly (matched rule: %s)",
+		branch, rule.BranchPattern)
 }
 
 func (s *Server) setupMiddleware() {

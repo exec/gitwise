@@ -105,6 +105,60 @@ func TestRepoPath(t *testing.T) {
 	}
 }
 
+func TestRepoPath_InvalidPanics(t *testing.T) {
+	svc := NewService("/data/repos")
+	tests := []struct {
+		owner, name string
+	}{
+		{"../etc", "passwd"},
+		{"alice", "../../evil"},
+		{"", "repo"},
+		{"alice", ""},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.owner+"/"+tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r == nil {
+					t.Errorf("RepoPath(%q, %q) expected panic but did not panic", tt.owner, tt.name)
+				}
+			}()
+			svc.RepoPath(tt.owner, tt.name)
+		})
+	}
+}
+
+func TestRepoPathSafe(t *testing.T) {
+	svc := NewService("/data/repos")
+	tests := []struct {
+		name    string
+		owner   string
+		repo    string
+		wantErr bool
+		wantSuf string // suffix of the expected path
+	}{
+		{"valid", "alice", "myproject", false, filepath.Join("alice", "myproject.git")},
+		{"traversal owner", "../etc", "passwd", true, ""},
+		{"traversal repo", "alice", "../../evil", true, ""},
+		{"empty owner", "", "repo", true, ""},
+		{"empty repo", "alice", "", true, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := svc.RepoPathSafe(tt.owner, tt.repo)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("RepoPathSafe(%q, %q) error = %v, wantErr %v", tt.owner, tt.repo, err, tt.wantErr)
+			}
+			if !tt.wantErr && !filepath.IsAbs(got) {
+				t.Errorf("RepoPathSafe returned non-absolute path: %q", got)
+			}
+			if tt.wantSuf != "" && got != filepath.Join("/data/repos", tt.wantSuf) {
+				t.Errorf("RepoPathSafe = %q, want suffix %q", got, tt.wantSuf)
+			}
+		})
+	}
+}
+
 func TestInitBare(t *testing.T) {
 	tmpDir := t.TempDir()
 	svc := NewService(tmpDir)
