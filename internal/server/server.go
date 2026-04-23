@@ -366,6 +366,12 @@ func (s *Server) initServices() {
 
 	// Index commits after every push
 	s.gitHTTP.PostReceiveHook = func(owner, repoName string) {
+		// Validate path components to prevent path traversal attacks
+		if err := git.ValidatePath(owner, repoName); err != nil {
+			slog.Error("post-receive: invalid path", "owner", owner, "repo", repoName, "error", err)
+			return
+		}
+
 		var repoID uuid.UUID
 		err := s.db.QueryRow(context.Background(), `
 			SELECT r.id FROM repositories r
@@ -430,7 +436,7 @@ func (s *Server) setupMiddleware() {
 	s.router.Use(chimw.Logger)
 	s.router.Use(chimw.Recoverer)
 	s.router.Use(middleware.SecurityHeaders)
-	s.router.Use(corsMiddleware)
+	s.router.Use(s.corsMiddleware())
 	s.router.Use(middleware.MaxBodySize(1 << 30)) // 1 GB body limit (git pushes can be large)
 	s.router.Use(s.auth.Handler)
 }
@@ -769,6 +775,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // For git-upload-pack (read): owner match, public repo, collaborator, or team membership.
 // For git-receive-pack (write): owner match, collaborator with write/admin, or team with write/admin.
 func (s *Server) checkSSHAccess(ctx context.Context, username, owner, repoName, service string) bool {
+	// Validate path components to prevent path traversal attacks
+	if err := git.ValidatePath(owner, repoName); err != nil {
+		slog.Error("checkSSHAccess: invalid path", "owner", owner, "repo", repoName, "error", err)
+		return false
+	}
+
 	// Owner always has full access
 	if strings.EqualFold(username, owner) {
 		return true
@@ -996,25 +1008,33 @@ func (s *Server) seedOfficialAgent() {
 	}
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if origin != "" {
-			// In production, validate against an allowlist. For self-hosted
-			// single-binary deployments, same-origin requests don't send Origin,
-			// so this only fires for legitimate cross-origin or dev proxy setups.
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type")
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Vary", "Origin")
-		}
+// corsMiddleware validates Origin header against configured allowlist.
+// Defaults to localhost for development. Configure GITWISE_CORS_ALLOWED_ORIGINS
+// (comma-separated) in production to restrict allowed origins.
+func (s *Server) corsMiddleware() func(http.Handler) http.Handler {
+	// Build allowlist from config, or use defaults if not configured
+	allowedOrigins := s.cfg.CORSAllowedOrigins
+	if len(allowedOrigins) == 0 {
+		allowedOrigins = []string{"http://localhost:3000", "http://localhost:5173"}
+	}
 
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			if origin != "" && config.IsOriginAllowed(origin, allowedOrigins) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type")
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set("Vary", "Origin")
+			}
 
-		next.ServeHTTP(w, r)
-	})
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }

@@ -603,7 +603,9 @@ func (s *Service) deliver(w models.Webhook, eventType string, payloadJSON []byte
 	}
 
 	var nextRetry *time.Time
-	if !success && 0 < len(retryDelays) {
+	// Initial delivery always has attempts=1. On failure, schedule first retry using retryDelays[0].
+	// Subsequent retries use exponential backoff based on attempt count (see retryDelivery).
+	if !success && 1 < maxAttempts && len(retryDelays) > 0 {
 		t := time.Now().Add(retryDelays[0])
 		nextRetry = &t
 	}

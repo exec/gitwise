@@ -4,23 +4,25 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type Config struct {
-	Port        int
-	Host        string
-	SSHPort     int
-	Database    DatabaseConfig
-	Redis       RedisConfig
-	Git         GitConfig
-	Frontend    FrontendConfig
-	Embedding   EmbeddingConfig
-	LLM         LLMConfig
-	Secret      string
-	BaseURL     string
-	GitHubOAuth GitHubOAuthConfig
-	TOTPKey     string // hex-encoded 32-byte AES-256 key for encrypting TOTP secrets at rest
+	Port             int
+	Host             string
+	SSHPort          int
+	Database         DatabaseConfig
+	Redis            RedisConfig
+	Git              GitConfig
+	Frontend         FrontendConfig
+	Embedding        EmbeddingConfig
+	LLM              LLMConfig
+	Secret           string
+	BaseURL          string
+	GitHubOAuth      GitHubOAuthConfig
+	TOTPKey          string // hex-encoded 32-byte AES-256 key for encrypting TOTP secrets at rest
+	CORSAllowedOrigins []string
 }
 
 type LLMConfig struct {
@@ -91,6 +93,7 @@ type FrontendConfig struct {
 func Load() *Config {
 	githubID := envStr("GITWISE_GITHUB_CLIENT_ID", "")
 	githubSecret := envStr("GITWISE_GITHUB_CLIENT_SECRET", "")
+	corsOrigins := parseCORSOrigins(envStr("GITWISE_CORS_ALLOWED_ORIGINS", ""))
 
 	return &Config{
 		Port:    envInt("GITWISE_PORT", 3000),
@@ -133,7 +136,8 @@ func Load() *Config {
 			OllamaURL:      envStr("GITWISE_OLLAMA_URL", "http://localhost:11434"),
 			OllamaModel:    envStr("GITWISE_OLLAMA_MODEL", "nomic-embed-text"),
 		},
-		LLM: loadLLMConfig(),
+		LLM:              loadLLMConfig(),
+		CORSAllowedOrigins: corsOrigins,
 	}
 }
 
@@ -189,4 +193,31 @@ func loadLLMConfig() LLMConfig {
 		MaxContext:         envInt("GITWISE_AGENT_MAX_CONTEXT", 100000),
 		Enabled:            envBool("GITWISE_AGENT_ENABLED", true),
 	}
+}
+
+// parseCORSOrigins parses comma-separated CORS origins from env var.
+// Defaults to localhost origins for development.
+func parseCORSOrigins(envValue string) []string {
+	if envValue == "" {
+		// Default to localhost for development
+		return []string{"http://localhost:3000", "http://localhost:5173"}
+	}
+	origins := []string{}
+	for _, origin := range strings.Split(envValue, ",") {
+		trimmed := strings.TrimSpace(origin)
+		if trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+	return origins
+}
+
+// IsOriginAllowed checks if an origin is in the allowed list.
+func IsOriginAllowed(origin string, allowed []string) bool {
+	for _, allowedOrigin := range allowed {
+		if origin == allowedOrigin {
+			return true
+		}
+	}
+	return false
 }
