@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -69,8 +71,61 @@ func (s *Service) EmbedAndStore(ctx context.Context, table, idColumn, textColumn
 	return nil
 }
 
+// embedWithRetry calls provider.Embed with exponential backoff + jitter.
+// It attempts up to maxAttempts times (delays: ~1s, ~2s, ~4s).
+// Returns the embeddings on success, or an error after all retries are exhausted.
+func (s *Service) embedWithRetry(ctx context.Context, texts []string) ([][]float32, error) {
+	const maxAttempts = 3
+	baseDelay := time.Second
+
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		embeddings, err := s.provider.Embed(ctx, texts)
+		if err == nil {
+			return embeddings, nil
+		}
+		lastErr = err
+
+		if attempt == maxAttempts-1 {
+			break
+		}
+
+		// Exponential backoff with full jitter: sleep up to baseDelay * 2^attempt
+		maxJitter := baseDelay << uint(attempt) // 1s, 2s, 4s
+		jitter := time.Duration(rand.Int63n(int64(maxJitter)))
+		slog.Warn("embedding provider failed, retrying",
+			"attempt", attempt+1,
+			"max_attempts", maxAttempts,
+			"backoff_ms", jitter.Milliseconds(),
+			"error", err,
+		)
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(jitter):
+		}
+	}
+	return nil, lastErr
+}
+
+// recordEmbeddingFailure persists a failure record so a worker can retry later.
+func (s *Service) recordEmbeddingFailure(ctx context.Context, table, id, reason string) {
+	_, err := s.db.Exec(ctx,
+		`INSERT INTO embedding_failures (id, table_name, reason, failed_at)
+		 VALUES ($1, $2, $3, now())
+		 ON CONFLICT (id, table_name) DO UPDATE SET reason = EXCLUDED.reason, failed_at = EXCLUDED.failed_at`,
+		id, table, reason,
+	)
+	if err != nil {
+		slog.Warn("failed to record embedding failure", "table", table, "id", id, "error", err)
+	}
+}
+
 // BackfillTable finds rows where the embedding column IS NULL, generates
 // embeddings in batches, and stores them. Returns the count of rows processed.
+// On provider failure (after retries) each failing row ID is recorded in
+// embedding_failures for later re-processing.
 func (s *Service) BackfillTable(ctx context.Context, table, idColumn, textColumn, embeddingColumn string, batchSize int) (int, error) {
 	if !s.enabled {
 		return 0, nil
@@ -114,14 +169,19 @@ func (s *Service) BackfillTable(ctx context.Context, table, idColumn, textColumn
 		return 0, nil
 	}
 
-	// Extract texts for batch embedding
+	// Extract texts for batch embedding (with retry/backoff)
 	texts := make([]string, len(pending))
 	for i, r := range pending {
 		texts[i] = r.text
 	}
 
-	embeddings, err := s.provider.Embed(ctx, texts)
+	embeddings, err := s.embedWithRetry(ctx, texts)
 	if err != nil {
+		// All retries exhausted — record every pending row as failed
+		slog.Error("batch embed failed after all retries", "table", table, "batch_size", len(pending), "error", err)
+		for _, r := range pending {
+			s.recordEmbeddingFailure(ctx, table, r.id, err.Error())
+		}
 		return 0, fmt.Errorf("batch embed: %w", err)
 	}
 
@@ -141,6 +201,7 @@ func (s *Service) BackfillTable(ctx context.Context, table, idColumn, textColumn
 		vecStr := float32SliceToVectorLiteral(embeddings[i])
 		if _, err := s.db.Exec(ctx, updateQuery, vecStr, r.id); err != nil {
 			slog.Warn("store embedding failed", "table", table, "id", r.id, "error", err)
+			s.recordEmbeddingFailure(ctx, table, r.id, err.Error())
 			continue
 		}
 		stored++
@@ -208,6 +269,8 @@ func float32SliceToVectorLiteral(v []float32) string {
 
 // sanitizeIdentifier validates that a SQL identifier contains only safe characters.
 // This prevents SQL injection when building dynamic queries for table/column names.
+// Note: quoted identifiers with special characters are not supported by design —
+// all Gitwise table/column names use lowercase letters, digits, and underscores only.
 func sanitizeIdentifier(id string) string {
 	for _, c := range id {
 		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
