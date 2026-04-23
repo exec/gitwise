@@ -411,10 +411,15 @@ func (s *Service) ValidateToken(ctx context.Context, rawToken string) (*models.U
 		return nil, ErrTokenNotFound
 	}
 
-	// Update last_used timestamp
+	u, err := s.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update last_used timestamp only after all validation succeeds.
 	s.db.Exec(ctx, `UPDATE api_tokens SET last_used = now() WHERE token_hash = $1`, tokenHash)
 
-	return s.GetByID(ctx, userID)
+	return u, nil
 }
 
 // ListTokens returns all tokens for a user (without the raw token).
