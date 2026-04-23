@@ -2,6 +2,8 @@ package sshkey
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
@@ -19,10 +21,44 @@ import (
 )
 
 var (
-	ErrInvalidKey   = errors.New("invalid SSH public key")
-	ErrDuplicateKey = errors.New("SSH key already exists")
-	ErrKeyNotFound  = errors.New("SSH key not found")
+	ErrInvalidKey    = errors.New("invalid SSH public key")
+	ErrWeakKey       = errors.New("SSH key type or size not allowed")
+	ErrDuplicateKey  = errors.New("SSH key already exists")
+	ErrKeyNotFound   = errors.New("SSH key not found")
 )
+
+// minRSABits is the minimum RSA key size accepted (NIST SP 800-131A Rev. 2).
+const minRSABits = 3072
+
+// validateKeyStrength rejects DSA keys, RSA keys below minRSABits, and any
+// key type that is not Ed25519, ECDSA (P-256/P-384/P-521), or RSA ≥ 3072.
+func validateKeyStrength(pub ssh.PublicKey) error {
+	cryptoPub, ok := pub.(ssh.CryptoPublicKey)
+	if !ok {
+		return fmt.Errorf("%w: cannot inspect key internals", ErrWeakKey)
+	}
+	switch k := cryptoPub.CryptoPublicKey().(type) {
+	case *rsa.PublicKey:
+		bits := k.N.BitLen()
+		if bits < minRSABits {
+			return fmt.Errorf("%w: RSA key is %d bits, minimum is %d", ErrWeakKey, bits, minRSABits)
+		}
+	case *ecdsa.PublicKey:
+		bits := k.Curve.Params().BitSize
+		if bits != 256 && bits != 384 && bits != 521 {
+			return fmt.Errorf("%w: ECDSA curve P-%d is not allowed", ErrWeakKey, bits)
+		}
+	default:
+		// Ed25519 and other modern algorithms are represented as ed25519.PublicKey
+		// (a []byte). Accept them unless the key type string starts with "ssh-dss"
+		// (DSA), which cannot implement CryptoPublicKey portably.
+		if pub.Type() == "ssh-dss" {
+			return fmt.Errorf("%w: DSA keys are not accepted", ErrWeakKey)
+		}
+		// All other types (ssh-ed25519, sk-*, etc.) are accepted.
+	}
+	return nil
+}
 
 type Service struct {
 	db *pgxpool.Pool
@@ -47,6 +83,10 @@ func (s *Service) Add(ctx context.Context, userID uuid.UUID, req models.CreateSS
 	parsed, comment, _, _, err := ssh.ParseAuthorizedKey([]byte(pubKeyStr))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidKey, err)
+	}
+
+	if err := validateKeyStrength(parsed); err != nil {
+		return nil, err
 	}
 
 	fingerprint := Fingerprint(parsed)

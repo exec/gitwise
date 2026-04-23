@@ -186,31 +186,72 @@ func (h *TwoFactorHandler) Status(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"enabled": enabled})
 }
 
+// Challenge is called by the client after every login attempt (step 1) to
+// determine whether 2FA verification is required. This design keeps the Login
+// response body identical for 2FA and non-2FA users (enumeration defence).
+//
+// The pending-2FA token is read from the HttpOnly gw_pending_2fa cookie set by
+// Login. If the cookie is absent or empty the account has no pending 2FA step
+// (either no 2FA is enabled, or the session was already issued by Login).
+func (h *TwoFactorHandler) Challenge(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie(middleware.Pending2FACookie)
+	if err != nil || cookie.Value == "" {
+		// No pending 2FA — the full session was already set by Login.
+		writeJSON(w, http.StatusOK, map[string]bool{"requires_2fa": false})
+		return
+	}
+
+	// Validate the token exists in Redis (do not consume yet).
+	_, valErr := h.totp.ValidatePendingAuth(r.Context(), cookie.Value)
+	if errors.Is(valErr, totp.ErrInvalidToken) || errors.Is(valErr, totp.ErrTooManyAttempts) {
+		// Expired or already exhausted — treat as no active 2FA challenge.
+		h.sessions.ClearPending2FACookie(w)
+		writeJSON(w, http.StatusOK, map[string]bool{"requires_2fa": false})
+		return
+	}
+	if valErr != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "failed to check 2FA challenge")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{"requires_2fa": true})
+}
+
 // Verify2FA completes a login that requires 2FA verification.
-// The client must present the pending_token from the login response plus a TOTP code.
+// The pending token is read from the gw_pending_2fa HttpOnly cookie (set by
+// Login) rather than the request body to prevent token leakage in URLs/logs.
 // I5: Token is looked up (not consumed) first; only consumed after successful verification.
 // C4: Attempt count is tracked; after 5 failures the token is deleted.
 func (h *TwoFactorHandler) Verify2FA(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PendingToken string `json:"pending_token"`
-		Code         string `json:"code"`
+		Code string `json:"code"`
 	}
 	if handleDecodeError(w, decodeJSON(r, &req)) {
 		return
 	}
 
-	if req.PendingToken == "" || req.Code == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "pending_token and code are required")
+	if req.Code == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "code is required")
 		return
 	}
 
+	// Read the pending token from the HttpOnly cookie (not the request body).
+	cookie, err := r.Cookie(middleware.Pending2FACookie)
+	if err != nil || cookie.Value == "" {
+		writeError(w, http.StatusBadRequest, "missing_token", "no pending 2FA session; please log in again")
+		return
+	}
+	pendingToken := cookie.Value
+
 	// I5: Look up user ID without consuming the token.
-	userID, err := h.totp.ValidatePendingAuth(r.Context(), req.PendingToken)
+	userID, err := h.totp.ValidatePendingAuth(r.Context(), pendingToken)
 	if errors.Is(err, totp.ErrInvalidToken) {
+		h.sessions.ClearPending2FACookie(w)
 		writeError(w, http.StatusUnauthorized, "invalid_token", "invalid or expired 2FA token")
 		return
 	}
 	if errors.Is(err, totp.ErrTooManyAttempts) {
+		h.sessions.ClearPending2FACookie(w)
 		writeError(w, http.StatusTooManyRequests, "too_many_attempts", "too many failed attempts; please log in again")
 		return
 	}
@@ -227,15 +268,16 @@ func (h *TwoFactorHandler) Verify2FA(w http.ResponseWriter, r *http.Request) {
 	}
 	if !valid {
 		// C4: Increment attempt counter on failure.
-		h.totp.IncrementAttempts(r.Context(), req.PendingToken)
+		h.totp.IncrementAttempts(r.Context(), pendingToken)
 		writeError(w, http.StatusUnauthorized, "invalid_code", "invalid 2FA code")
 		return
 	}
 
 	// I5: Only consume the pending token after successful verification.
-	h.totp.ConsumePendingAuth(r.Context(), req.PendingToken)
+	h.totp.ConsumePendingAuth(r.Context(), pendingToken)
 
-	// Create the full session now that 2FA is verified.
+	// Clear the pending-2FA cookie and create the full session.
+	h.sessions.ClearPending2FACookie(w)
 	if err := h.sessions.Create(r.Context(), w, userID); err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to create session")
 		return

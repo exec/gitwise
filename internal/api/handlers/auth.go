@@ -54,6 +54,19 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, u)
 }
 
+// Login handles the first step of authentication (username/password).
+//
+// Enumeration defence: the response is identical regardless of whether the
+// account requires 2FA.  Specifically:
+//   - On success with no 2FA: a full session cookie is issued AND a no-op
+//     pending-2FA cookie is set (empty value) so the client always calls the
+//     challenge endpoint.
+//   - On success with 2FA: a pending-2FA cookie is set; no session yet.
+//   - On bad credentials: generic 401, same body as a 2FA-required success
+//     would produce (just the status code differs, not the success path bodies).
+//
+// The client MUST always POST to /api/v1/auth/2fa/challenge after step 1.
+// That endpoint returns {requires_2fa: bool, ...} based on the cookie.
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req models.LoginRequest
 	if handleDecodeError(w, decodeJSON(r, &req)) {
@@ -79,27 +92,30 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if enabled {
-			// Don't create a session yet. Return a pending token for 2FA verification.
+			// Store pending auth state in a short-lived HttpOnly cookie.
+			// Do NOT reveal 2FA state in the response body.
 			pendingToken, err := h.totp.StorePendingAuth(r.Context(), u.ID)
 			if err != nil {
 				slog.Error("failed to create pending 2fa auth", "error", err)
 				writeError(w, http.StatusInternalServerError, "server_error", "authentication failed")
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{
-				"requires_2fa":  true,
-				"pending_token": pendingToken,
-			})
+			h.sessions.SetPending2FACookie(w, pendingToken)
+			// Return the same success shape regardless of 2FA state.
+			writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 			return
 		}
 	}
 
+	// No 2FA: issue the full session immediately.
 	if err := h.sessions.Create(r.Context(), w, u.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to create session")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, u)
+	// Clear any stale pending-2FA cookie and return uniform success.
+	h.sessions.ClearPending2FACookie(w)
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
@@ -282,14 +298,17 @@ func (h *AuthHandler) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if enabled {
-			// Store a pending auth token and redirect to the frontend 2FA challenge.
+			// Store a pending auth token in a short-lived HttpOnly cookie and
+			// redirect to the login page WITHOUT the token in the URL (prevents
+			// token leakage via Referer headers and server logs).
 			pendingToken, err := h.totp.StorePendingAuth(r.Context(), u.ID)
 			if err != nil {
 				slog.Error("failed to create pending 2fa auth for github user", "error", err)
 				writeError(w, http.StatusInternalServerError, "server_error", "authentication failed")
 				return
 			}
-			http.Redirect(w, r, "/login?pending_2fa="+pendingToken, http.StatusTemporaryRedirect)
+			h.sessions.SetPending2FACookie(w, pendingToken)
+			http.Redirect(w, r, "/login", http.StatusTemporaryRedirect)
 			return
 		}
 	}

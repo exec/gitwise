@@ -171,6 +171,10 @@ func (s *Service) Enable(ctx context.Context, userID uuid.UUID, code string) err
 		return fmt.Errorf("decrypt totp secret: %w", err)
 	}
 
+	// totp.Validate uses go-otp's default ±1 step window (±30 s at the standard
+	// 30-second step size), accepting codes from the previous, current, and next
+	// 30-second window — an effective accepted window of up to 90 seconds to
+	// accommodate clock skew between the client and server.
 	if !totp.Validate(code, secret) {
 		return ErrInvalidCode
 	}

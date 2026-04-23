@@ -76,11 +76,38 @@ func (s *Service) ValidateState(ctx context.Context, state string) bool {
 	return err == nil && res == 1
 }
 
+// allowedCallbackSuffix is the only path suffix accepted as an OAuth callback.
+// Any redirect URI that does not match this suffix is rejected.
+const allowedCallbackSuffix = "/api/v1/auth/github/callback"
+
+// callbackURI returns the single allowed callback URI derived from BaseURL.
+// It validates the constructed URI to ensure it matches the allowlist before use.
+func (s *Service) callbackURI() (string, error) {
+	u, err := url.Parse(s.base)
+	if err != nil {
+		return "", fmt.Errorf("parse base URL: %w", err)
+	}
+	// Only allow http/https schemes to prevent javascript: or data: injection.
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("base URL has disallowed scheme %q", u.Scheme)
+	}
+	// Force the path to the single allowed callback suffix.
+	u.Path = allowedCallbackSuffix
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String(), nil
+}
+
 // GetGitHubAuthURL returns the GitHub authorization URL with the given state.
 func (s *Service) GetGitHubAuthURL(state string) string {
+	cb, err := s.callbackURI()
+	if err != nil {
+		// Fall back to a safe constant constructed from the stored base.
+		cb = strings.TrimRight(s.base, "/") + allowedCallbackSuffix
+	}
 	params := url.Values{
 		"client_id":    {s.cfg.ClientID},
-		"redirect_uri": {s.base + "/api/v1/auth/github/callback"},
+		"redirect_uri": {cb},
 		"scope":        {"user:email"},
 		"state":        {state},
 	}
@@ -91,11 +118,15 @@ func (s *Service) GetGitHubAuthURL(state string) string {
 // and fetches the GitHub user profile.
 func (s *Service) ExchangeGitHubCode(ctx context.Context, code string) (*GitHubUser, string, error) {
 	// Step 1: Exchange code for access token.
+	cb, err := s.callbackURI()
+	if err != nil {
+		return nil, "", fmt.Errorf("build callback URI: %w", err)
+	}
 	tokenReqBody := url.Values{
 		"client_id":     {s.cfg.ClientID},
 		"client_secret": {s.cfg.ClientSecret},
 		"code":          {code},
-		"redirect_uri":  {s.base + "/api/v1/auth/github/callback"},
+		"redirect_uri":  {cb},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, githubTokenURL, strings.NewReader(tokenReqBody.Encode()))
