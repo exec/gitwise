@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -14,7 +15,10 @@ import (
 	"github.com/gitwise-io/gitwise/internal/websocket"
 )
 
-var ErrNotFound = errors.New("notification not found")
+var (
+	ErrNotFound           = errors.New("notification not found")
+	ErrNotificationSkipped = errors.New("notification skipped: type disabled by user preference")
+)
 
 type Service struct {
 	db  *pgxpool.Pool
@@ -185,16 +189,21 @@ func (s *Service) WatcherCount(ctx context.Context, repoID uuid.UUID) (int, erro
 	return count, nil
 }
 
+// Create inserts a notification for userID if the given type is enabled in
+// their preferences (defaulting to enabled when no preference row exists).
+//
+// The preference check and the INSERT are collapsed into a single SQL
+// statement to eliminate the TOCTOU race that existed when they were two
+// separate queries: a user could disable a type between the SELECT and the
+// INSERT and still receive the notification.
+//
+// Returns (nil, ErrNotificationSkipped) when the type is disabled so callers
+// can branch cleanly without treating the skip as a hard error.
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, notifType, title, body, link string) (*models.Notification, error) {
-	// Check if user has this notification type enabled
-	enabled, err := s.IsTypeEnabled(ctx, userID, notifType)
-	if err != nil {
-		return nil, fmt.Errorf("check notification preference: %w", err)
-	}
-	if !enabled {
-		// User has disabled this notification type — skip silently
-		return nil, nil
-	}
+	// Map the generic notifType string to the matching boolean column in
+	// notification_preferences.  Unknown types default to enabled (no pref
+	// row → allowed; known type with pref row → respect the column).
+	prefColumn := notifTypeToColumn(notifType)
 
 	n := &models.Notification{
 		ID:       uuid.New(),
@@ -207,14 +216,43 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, notifType, title
 		Metadata: json.RawMessage(`{}`),
 	}
 
-	err = s.db.QueryRow(ctx, `
-		INSERT INTO notifications (id, user_id, type, title, body, link, is_read, metadata)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING created_at`,
+	// Single atomic statement: insert only when the pref is enabled (or absent).
+	// The CTE returns a boolean so we can distinguish "skipped" from "inserted"
+	// without a second round-trip.  If the INSERT is skipped, created_at is NULL
+	// and we return ErrNotificationSkipped.
+	query := fmt.Sprintf(`
+		WITH pref AS (
+			SELECT %s AS enabled
+			FROM notification_preferences
+			WHERE user_id = $2
+		),
+		allowed AS (
+			SELECT COALESCE((SELECT enabled FROM pref), TRUE) AS ok
+		),
+		ins AS (
+			INSERT INTO notifications (id, user_id, type, title, body, link, is_read, metadata)
+			SELECT $1, $2, $3, $4, $5, $6, $7, $8
+			WHERE (SELECT ok FROM allowed)
+			RETURNING created_at
+		)
+		SELECT (SELECT ok FROM allowed), (SELECT created_at FROM ins)
+	`, prefColumn)
+
+	var enabled bool
+	var createdAt *time.Time
+	err := s.db.QueryRow(ctx, query,
 		n.ID, n.UserID, n.Type, n.Title, n.Body, n.Link, n.Read, n.Metadata,
-	).Scan(&n.CreatedAt)
+	).Scan(&enabled, &createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("insert notification: %w", err)
+	}
+
+	if !enabled {
+		return nil, ErrNotificationSkipped
+	}
+
+	if createdAt != nil {
+		n.CreatedAt = *createdAt
 	}
 
 	if s.hub != nil {
@@ -226,6 +264,27 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, notifType, title
 	}
 
 	return n, nil
+}
+
+// notifTypeToColumn maps a notification type string to the corresponding
+// boolean column in notification_preferences.  Unknown types are treated as
+// always enabled by returning the SQL literal TRUE.
+func notifTypeToColumn(notifType string) string {
+	switch notifType {
+	case "pr_review":
+		return "pr_review"
+	case "pr_merged":
+		return "pr_merged"
+	case "pr_comment":
+		return "pr_comment"
+	case "issue_comment":
+		return "issue_comment"
+	case "mention":
+		return "mention"
+	default:
+		// Unknown types are always enabled — no column to look up
+		return "TRUE"
+	}
 }
 
 func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID, unreadOnly bool, limit int) ([]models.Notification, error) {

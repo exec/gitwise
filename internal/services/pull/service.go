@@ -349,19 +349,6 @@ func (s *Service) Update(ctx context.Context, repoID uuid.UUID, number int, req 
 }
 
 func (s *Service) Merge(ctx context.Context, repoID uuid.UUID, number int, mergerID uuid.UUID, ownerName, repoName string, req models.MergePullRequestRequest) (*models.PullRequest, error) {
-	// Get the PR
-	pr, err := s.GetByNumber(ctx, repoID, number)
-	if err != nil {
-		return nil, err
-	}
-
-	if pr.Status == "merged" {
-		return nil, ErrAlreadyMerged
-	}
-	if pr.Status != "open" {
-		return nil, ErrNotOpen
-	}
-
 	strategy := req.Strategy
 	if strategy == "" {
 		strategy = "merge"
@@ -373,6 +360,53 @@ func (s *Service) Merge(ctx context.Context, repoID uuid.UUID, number int, merge
 		return nil, fmt.Errorf("%w: strategy must be merge, squash, or rebase", ErrInvalidStatus)
 	}
 
+	// Get merger info — hard error if lookup fails (merger must exist)
+	var mergerName, mergerEmail string
+	if err := s.db.QueryRow(ctx, `SELECT username, email FROM users WHERE id = $1`, mergerID).Scan(&mergerName, &mergerEmail); err != nil {
+		return nil, fmt.Errorf("lookup merger: %w", err)
+	}
+
+	// Open a transaction and lock the PR row for the entire merge sequence.
+	// This prevents concurrent merges and ensures the DB update is committed
+	// atomically with the status check.  The git merge itself happens inside
+	// the transaction window so that if the DB commit fails after the merge
+	// we can at least log the merge SHA for operator recovery.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin merge tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck — rolled back on every non-commit path
+
+	pr := &models.PullRequest{}
+	err = tx.QueryRow(ctx, `
+		SELECT p.id, p.repo_id, p.number, p.author_id, u.username,
+		       p.title, p.body, p.source_branch, p.target_branch, p.status,
+		       p.intent, p.diff_stats, p.review_summary, p.merge_strategy,
+		       p.merged_by, p.merged_at, p.closed_at, p.created_at, p.updated_at
+		FROM pull_requests p
+		JOIN users u ON u.id = p.author_id
+		WHERE p.repo_id = $1 AND p.number = $2
+		FOR UPDATE`, repoID, number,
+	).Scan(
+		&pr.ID, &pr.RepoID, &pr.Number, &pr.AuthorID, &pr.AuthorName,
+		&pr.Title, &pr.Body, &pr.SourceBranch, &pr.TargetBranch, &pr.Status,
+		&pr.Intent, &pr.DiffStats, &pr.ReviewSummary, &pr.MergeStrategy,
+		&pr.MergedByID, &pr.MergedAt, &pr.ClosedAt, &pr.CreatedAt, &pr.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lock PR: %w", err)
+	}
+
+	if pr.Status == "merged" {
+		return nil, ErrAlreadyMerged
+	}
+	if pr.Status != "open" {
+		return nil, ErrNotOpen
+	}
+
 	// Check branch protection rules
 	rule, err := s.prot.Check(ctx, repoID, pr.TargetBranch)
 	if err != nil {
@@ -381,7 +415,7 @@ func (s *Service) Merge(ctx context.Context, repoID uuid.UUID, number int, merge
 	if rule != nil {
 		if rule.RequiredReviews > 0 {
 			var approvalCount int
-			err := s.db.QueryRow(ctx,
+			err := tx.QueryRow(ctx,
 				`SELECT COUNT(DISTINCT author_id) FROM reviews WHERE pr_id = $1 AND type = 'approval'`,
 				pr.ID,
 			).Scan(&approvalCount)
@@ -397,25 +431,21 @@ func (s *Service) Merge(ctx context.Context, repoID uuid.UUID, number int, merge
 		}
 	}
 
-	// Get merger info — hard error if lookup fails (merger must exist)
-	var mergerName, mergerEmail string
-	if err := s.db.QueryRow(ctx, `SELECT username, email FROM users WHERE id = $1`, mergerID).Scan(&mergerName, &mergerEmail); err != nil {
-		return nil, fmt.Errorf("lookup merger: %w", err)
-	}
-
 	message := req.Message
 	if message == "" {
 		message = fmt.Sprintf("Merge pull request #%d from %s into %s", pr.Number, pr.SourceBranch, pr.TargetBranch)
 	}
 
-	// Perform git merge
+	// Perform git merge while the row lock is held.
 	if err := s.git.MergeBranches(ownerName, repoName, pr.TargetBranch, pr.SourceBranch, strategy, message, mergerName, mergerEmail); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrMergeFailed, err)
 	}
 
-	// Update PR in database
+	// Update PR status in the same transaction.  If this commit fails after
+	// the git merge succeeded, the merge commit exists on disk but the DB still
+	// shows 'open'.  We log CRITICAL so an operator can reconcile.
 	now := time.Now()
-	err = s.db.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE pull_requests
 		SET status = 'merged', merge_strategy = $3, merged_by = $4, merged_at = $5, closed_at = $5, updated_at = $5
 		WHERE repo_id = $1 AND number = $2
@@ -432,7 +462,20 @@ func (s *Service) Merge(ctx context.Context, repoID uuid.UUID, number int, merge
 		&pr.MergedByID, &pr.MergedAt, &pr.ClosedAt, &pr.CreatedAt, &pr.UpdatedAt,
 	)
 	if err != nil {
+		// Git merge already happened; log CRITICAL so an operator can reconcile.
+		slog.Error("CRITICAL: git merge succeeded but DB update failed; manual reconciliation required",
+			"repo_id", repoID, "pr_number", number,
+			"source_branch", pr.SourceBranch, "target_branch", pr.TargetBranch,
+			"merger_id", mergerID, "error", err)
 		return nil, fmt.Errorf("update merged PR: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		slog.Error("CRITICAL: git merge succeeded but DB commit failed; manual reconciliation required",
+			"repo_id", repoID, "pr_number", number,
+			"source_branch", pr.SourceBranch, "target_branch", pr.TargetBranch,
+			"merger_id", mergerID, "error", err)
+		return nil, fmt.Errorf("commit merge tx: %w", err)
 	}
 
 	pr.MergedByName = mergerName

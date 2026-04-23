@@ -314,24 +314,55 @@ func isValidPriority(p string) bool {
 }
 
 
-// resolveAssignees converts a list of usernames to UUIDs by querying the users table.
+// resolveAssignees converts a list of usernames to UUIDs using a single
+// batch query (WHERE username = ANY($1)) instead of one query per username.
 func (s *Service) resolveAssignees(ctx context.Context, usernames []string) ([]uuid.UUID, error) {
 	if len(usernames) == 0 {
 		return []uuid.UUID{}, nil
 	}
-	assignees := make([]uuid.UUID, 0, len(usernames))
-	for _, username := range usernames {
-		username = strings.TrimSpace(username)
-		if username == "" {
+
+	// Deduplicate and clean the username list
+	seen := make(map[string]struct{}, len(usernames))
+	clean := make([]string, 0, len(usernames))
+	for _, u := range usernames {
+		u = strings.TrimSpace(u)
+		if u == "" {
 			continue
 		}
-		var id uuid.UUID
-		err := s.db.QueryRow(ctx, `SELECT id FROM users WHERE username = $1`, username).Scan(&id)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("assignee %q not found", username)
+		if _, ok := seen[u]; !ok {
+			seen[u] = struct{}{}
+			clean = append(clean, u)
 		}
-		if err != nil {
-			return nil, fmt.Errorf("resolve assignee %q: %w", username, err)
+	}
+	if len(clean) == 0 {
+		return []uuid.UUID{}, nil
+	}
+
+	rows, err := s.db.Query(ctx,
+		`SELECT username, id FROM users WHERE username = ANY($1)`, clean)
+	if err != nil {
+		return nil, fmt.Errorf("resolve assignees: %w", err)
+	}
+	defer rows.Close()
+
+	found := make(map[string]uuid.UUID, len(clean))
+	for rows.Next() {
+		var uname string
+		var id uuid.UUID
+		if err := rows.Scan(&uname, &id); err != nil {
+			return nil, fmt.Errorf("resolve assignees: scan: %w", err)
+		}
+		found[uname] = id
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("resolve assignees: iterate: %w", err)
+	}
+
+	assignees := make([]uuid.UUID, 0, len(clean))
+	for _, u := range clean {
+		id, ok := found[u]
+		if !ok {
+			return nil, fmt.Errorf("assignee %q not found", u)
 		}
 		assignees = append(assignees, id)
 	}
