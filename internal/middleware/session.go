@@ -22,6 +22,11 @@ const (
 	sessionCookie  = "gitwise_session"
 	sessionPrefix  = "session:"
 	sessionExpiry  = 7 * 24 * time.Hour
+
+	// Pending-2FA cookie: short-lived, HttpOnly, SameSite=Strict.
+	// Carries a pending-auth token across the step-1 → challenge redirect.
+	Pending2FACookie  = "gw_pending_2fa"
+	Pending2FAExpiry  = 5 * time.Minute
 )
 
 type SessionData struct {
@@ -61,7 +66,7 @@ func (sm *SessionManager) Create(ctx context.Context, w http.ResponseWriter, use
 		Path:     "/",
 		MaxAge:   int(sessionExpiry.Seconds()),
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 		Secure:   sm.secureCookie,
 	})
 
@@ -95,6 +100,33 @@ func (sm *SessionManager) Get(ctx context.Context, r *http.Request) (*SessionDat
 	return &data, cookie.Value, nil
 }
 
+// SetPending2FACookie writes a short-lived, HttpOnly, SameSite=Strict cookie
+// carrying the pending-2FA token. Used to avoid leaking the token in URLs.
+func (sm *SessionManager) SetPending2FACookie(w http.ResponseWriter, pendingToken string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     Pending2FACookie,
+		Value:    pendingToken,
+		Path:     "/",
+		MaxAge:   int(Pending2FAExpiry.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   sm.secureCookie,
+	})
+}
+
+// ClearPending2FACookie expires the pending-2FA cookie.
+func (sm *SessionManager) ClearPending2FACookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     Pending2FACookie,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   sm.secureCookie,
+	})
+}
+
 func (sm *SessionManager) Destroy(ctx context.Context, w http.ResponseWriter, sessionID string) error {
 	sm.redis.Del(ctx, sessionPrefix+sessionID)
 	http.SetCookie(w, &http.Cookie{
@@ -103,7 +135,7 @@ func (sm *SessionManager) Destroy(ctx context.Context, w http.ResponseWriter, se
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 		Secure:   sm.secureCookie,
 	})
 	return nil
